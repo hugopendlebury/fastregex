@@ -1,8 +1,8 @@
 [project]
-name = "flpc"
-version = "0.2.5"
+name = "fastre"
+version = "0.2.6"
 description = "A Lightning Fast ⚡ Rust-based regex crate wrapper for Python3 to get faster performance. 👾"
-maintainers = [{ name = "Adarsh Gourab Mahalik", email = "gourabmahalikadarsh@gmail.com" }]
+maintainers = [{ name = "Hugo Pendlebury", email = "hugo.pendlebury@gmail.com" }]
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"

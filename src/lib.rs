@@ -1,21 +1,30 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use regex::{Captures, Regex, RegexBuilder};
+use fancy_regex::{Captures, Regex, RegexBuilder};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
+
 #[pyclass]
 struct Pattern {
     regex: Regex,
+    flags: u32
 }
 
 #[pyclass]
 struct Match {
     #[allow(dead_code)]
-    mat: regex::Match<'static>,
+    mat: fancy_regex::Match<'static>,
     captures: Captures<'static>,
+    text: String,
+}
+
+#[pyclass]
+struct MatchPartial {
+    #[allow(dead_code)]
+    mat: fancy_regex::Match<'static>,
     text: String,
 }
 
@@ -24,10 +33,12 @@ struct Scanner {
     // Implement as needed
 }
 
-#[pyclass]
-struct RegexFlag {
-    #[allow(dead_code)]
-    pub bits: u32,
+#[pyclass(eq, eq_int)]
+#[derive(PartialEq)]
+enum RegexFlags {
+    NOFLAG=0,
+    IGNORECASE=1,
+    DOTALL=2
 }
 
 #[pyclass]
@@ -78,108 +89,198 @@ impl Match {
 }
 
 #[pyfunction]
+#[pyo3(signature = (pattern, flags=None))]
 fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
     let flags = flags.unwrap_or(0);
     let mut cache = get_regex_cache().lock().unwrap();
     
     if let Some(regex) = cache.get(&(pattern.to_string(), flags)) {
-        return Ok(Pattern { regex: regex.clone() });
+        return Ok(Pattern { regex: regex.clone(), flags: flags });
     }
 
     let mut builder = RegexBuilder::new(pattern);
+
+
     if flags & 0b0001 != 0 {
         builder.case_insensitive(true);
     }
+    /* 
     if flags & 0b0010 != 0 {
         builder.multi_line(true);
     }
     if flags & 0b0100 != 0 {
         builder.dot_matches_new_line(true);
     }
-    // Add other flags as needed
+    */
+    // TODO Add other flags as needed
 
     let regex = builder
         .build()
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     
     cache.insert((pattern.to_string(), flags), regex.clone());
-    Ok(Pattern { regex })
+    Ok(Pattern { regex, flags })
+}
+
+#[pymethods]
+impl Pattern {
+
+
+    pub fn findall(&self, text: &str) -> PyResult<Vec<String>> {
+
+        findall(self, text)
+
+    }
+
+    /* 
+    pub fn finditer(&self, text: &str) -> PyResult<Vec<Match>> {
+
+        finditer(self, text)
+
+    }
+    */
+
+    pub fn fullmatch(&self, text: &str) -> PyResult<Option<Match>>  {
+
+        fullmatch(self, text)
+
+    }
+
+    pub fn flags(&self) -> PyResult<u32>  {
+
+        //TODO - Check what flags returns in python
+        Ok(self.flags)
+
+    }
+
+    //TODO groupindex
+    pub fn r#match(&self, text: &str) -> PyResult<Option<Match>> {
+        fmatch(self, text)
+    }
+
+    
 }
 
 #[pyfunction]
 fn search(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
-    pattern.regex.captures(text).map(|captures| {
-        let mat = captures.get(0).unwrap();
-        Ok(Some(Match {
-            mat: unsafe { std::mem::transmute(mat) },
-            captures: unsafe { std::mem::transmute(captures) },
-            text: text.to_string(),
-        }))
-    }).unwrap_or(Ok(None))
+    let captures = pattern
+        .regex
+        .captures(text)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))?;
+
+    if let Some(caps) = captures {
+        if let Some(mat) = caps.get(0) {
+            Ok(Some(Match {
+                mat: unsafe { std::mem::transmute(mat) },
+                captures: unsafe { std::mem::transmute(caps) },
+                text: text.to_string(),
+            }))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 #[pyfunction(name = "fmatch")]
 fn fmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
     pattern.regex.captures(text).and_then(|captures| {
-        let mat = captures.get(0).unwrap();
-        if mat.start() == 0 {
-            Some(Ok(Some(Match {
-                mat: unsafe { std::mem::transmute(mat) },
-                captures: unsafe { std::mem::transmute(captures) },
-                text: text.to_string(),
-            })))
+
+        Ok(if let Some(caps) = captures {
+            if let Some(mat) = caps.get(0) {
+                if mat.start() == 0 {
+                   Ok(Some(Match {
+                        mat: unsafe { std::mem::transmute(mat) },
+                        captures: unsafe { std::mem::transmute(caps) },
+                        text: text.to_string(),
+                    }))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
         } else {
-            None
-        }
+            Ok(None)
+        })
+
     }).unwrap_or(Ok(None))
+
+
 }
 
 #[pyfunction]
 fn fullmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
+
     pattern.regex.captures(text).and_then(|captures| {
-        let mat = captures.get(0).unwrap();
-        if mat.as_str() == text {
-            Some(Ok(Some(Match {
-                mat: unsafe { std::mem::transmute(mat) },
-                captures: unsafe { std::mem::transmute(captures) },
-                text: text.to_string(),
-            })))
+        Ok(if let Some(caps) = captures {
+            if let Some(mat) = caps.get(0) {
+                if mat.as_str() == text {
+                   Ok(Some(Match {
+                        mat: unsafe { std::mem::transmute(mat) },
+                        captures: unsafe { std::mem::transmute(caps) },
+                        text: text.to_string(),
+                    }))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
         } else {
-            None
-        }
+            Ok(None)
+        })
+
     }).unwrap_or(Ok(None))
+
+
 }
 
-#[pyfunction]
-fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
-    Ok(pattern.regex.split(text).map(|s| s.to_string()).collect())
-}
+use fancy_regex::Error;
+
+
+
 
 #[pyfunction]
 fn findall(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
-    Ok(pattern
+
+    let matches = pattern
         .regex
         .find_iter(text)
-        .map(|mat| mat.as_str().to_string())
-        .collect())
+        .map(|mat| {
+            let res = mat.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))?.as_str().to_string();
+            Ok::<String, PyErr>(res)
+        }).collect::<Result<Vec<String>, _>>()?;
+
+    Ok(matches)
+
 }
 
+/* 
 #[pyfunction]
 fn finditer(pattern: &Pattern, text: &str) -> PyResult<Vec<Match>> {
-    Ok(pattern
-        .regex
-        .captures_iter(text)
-        .map(|captures| {
-            let mat = captures.get(0).unwrap();
-            Match {
-                mat: unsafe { std::mem::transmute(mat) },
-                captures: unsafe { std::mem::transmute(captures) },
-                text: text.to_string(),
+    let mut matches: Vec<Match> = Vec::new();
+    for result in pattern.regex.captures_iter(text) {
+        let caps = result.map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e))
+        })?;
+        // For each match, push a Match struct for every group from 1 to caps.len()
+        for idx in 1..caps.len() {
+            if let Some(mat) = caps.get(idx) {
+                let static_mat: fancy_regex::Match<'static> = unsafe { std::mem::transmute(mat) };
+                let static_caps: Captures<'static> = unsafe { std::mem::transmute(&caps) };
+                matches.push(Match {
+                    mat: static_mat,
+                    captures: static_caps,
+                    text: text.to_string(),
+                });
             }
-        })
-        .collect())
+        }
+    }
+    Ok(matches)
 }
-
+*/
 #[pyfunction]
 fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
     Ok(pattern.regex.replace_all(text, repl).into_owned())
@@ -194,7 +295,7 @@ fn subn(pattern: &Pattern, repl: &str, text: &str) -> PyResult<(String, usize)> 
 
 #[pyfunction]
 fn escape(text: &str) -> PyResult<String> {
-    Ok(regex::escape(text))
+    Ok(fancy_regex::escape(text).to_string())
 }
 
 #[pyfunction]
@@ -203,12 +304,32 @@ fn purge() -> PyResult<()> {
     Ok(())
 }
 
+#[pyfunction]
+fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
+
+    let results: Result<Vec<_>, _>  = pattern.regex.split(text) 
+                                .collect::<Result<Vec<_>, _>>();
+
+    match results {
+        Ok(result ) => { let parts = result.into_iter()
+                                    .map(|s| String::from(s))
+                                    .collect();
+                                Ok(parts)
+
+        }
+        Err(err) => Err(PyValueError::new_err(err.to_string()))
+    }
+
+
+
+}
+
 #[pymodule]
-fn flpc(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pattern>()?;
     m.add_class::<Match>()?;
     m.add_class::<Scanner>()?;
-    m.add_class::<RegexFlag>()?;
+    m.add_class::<RegexFlags>()?;
     m.add_class::<Constants>()?;
     m.add_class::<Sre>()?;
     m.add("__version__", "0.1.4")?;
@@ -216,8 +337,8 @@ fn flpc(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "__doc__",
         "",
     )?;
-    m.add("__name__", "flpc")?;
-    m.add("__package__", "flpc")?;
+    m.add("__name__", "fastre")?;
+    m.add("__package__", "fastre")?;
     m.add(
         "__all__",
         vec![
@@ -227,7 +348,7 @@ fn flpc(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "fullmatch",
             "split",
             "findall",
-            "finditer",
+            //"finditer",
             "sub",
             "subn",
             "escape",
@@ -241,7 +362,7 @@ fn flpc(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fullmatch, m)?)?;
     m.add_function(wrap_pyfunction!(split, m)?)?;
     m.add_function(wrap_pyfunction!(findall, m)?)?;
-    m.add_function(wrap_pyfunction!(finditer, m)?)?;
+    //m.add_function(wrap_pyfunction!(finditer, m)?)?;
     m.add_function(wrap_pyfunction!(sub, m)?)?;
     m.add_function(wrap_pyfunction!(subn, m)?)?;
     m.add_function(wrap_pyfunction!(escape, m)?)?;
