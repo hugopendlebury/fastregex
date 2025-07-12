@@ -389,7 +389,7 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RegexFlags>()?;
     m.add_class::<Constants>()?;
     m.add_class::<Sre>()?;
-    m.add("__version__", "0.2.8")?;
+    m.add("__version__", "0.2.9")?;
     m.add("__doc__", "")?;
     m.add("__name__", "fastre")?;
     m.add("__package__", "fastre")?;
