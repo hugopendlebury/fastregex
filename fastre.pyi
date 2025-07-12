@@ -37,11 +37,19 @@ class Pattern:
         """Perform the same operation as sub(), but return a tuple (new_string, number_of_subs_made)."""
         ...
 
+    def pattern(self) -> str:
+        """Return the pattern / regular expression"""
+        ...
+
+    def groups(self) -> List[Optional[str]]:
+        """Return a list of all groups matched by the pattern."""
+        ...
+
     #'flags',
     #'groupindex',
     #'groups',
     #'scanner',
-    #'pattern',
+
 
 class Match:
     """A match object returned by a regex search."""

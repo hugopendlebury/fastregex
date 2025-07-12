@@ -9,12 +9,14 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 #[pyclass]
+#[derive(Debug, Clone)]
 struct Pattern {
     regex: Regex,
     flags: u32,
 }
 
 #[pyclass]
+#[derive(Debug)]
 struct Match {
     #[allow(dead_code)]
     mat: fancy_regex::Match<'static>,
@@ -47,6 +49,7 @@ static REGEX_CACHE: OnceLock<Mutex<HashMap<(String, u32), Regex>>> = OnceLock::n
 fn get_regex_cache() -> &'static Mutex<HashMap<(String, u32), Regex>> {
     REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
 
 #[pymethods]
 impl Match {
@@ -112,7 +115,7 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
     if let Some(regex) = cache.get(&(pattern.to_string(), flags)) {
         return Ok(Pattern {
             regex: regex.clone(),
-            flags: flags,
+            flags: flags
         });
     }
 
@@ -141,6 +144,11 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
 
 #[pymethods]
 impl Pattern {
+
+    pub fn __str__(&self) -> String {
+        String::from("fastre.Pattern")
+    }
+
     pub fn findall(&self, text: &str) -> PyResult<Vec<String>> {
         findall(self, text)
     }
@@ -163,7 +171,7 @@ impl Pattern {
     }
 
     //TODO groupindex
-    pub fn r#match(&self, text: &str) -> PyResult<Option<Match>> {
+    pub fn r#match(&mut self, text: &str) -> PyResult<Option<Match>> {
         r#match(self, text)
     }
 
@@ -181,6 +189,10 @@ impl Pattern {
 
     fn subn(&self, repl: &str, text: &str) -> PyResult<(String, usize)> {
         subn(self, repl, text)
+    }
+
+    fn pattern(&self) -> String {
+        self.regex.to_string()
     }
 
 
@@ -218,7 +230,7 @@ fn r#match_str(pattern: String, text: &str) -> PyResult<Option<Match>> {
     let regex = Regex::new(&pattern);
     match regex {
         Ok(r) => {
-            let p = Pattern { regex: r, flags: 0 };
+            let mut p = Pattern { regex: r, flags: 0 };
             p.r#match(text)
         }
         Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
