@@ -1,5 +1,6 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pyo3::wrap_pyfunction;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ struct Match {
     #[allow(dead_code)]
     mat: fancy_regex::Match<'static>,
     captures: Captures<'static>,
+    named_groups: Vec<Option<String>>,
     text: String,
 }
 
@@ -77,6 +79,29 @@ impl Match {
             let start = self.text[..m.start()].chars().count();
             let end = self.text[..m.end()].chars().count();
             (start, end)
+        })
+    }
+
+    fn groupdict(&self) -> PyResult<PyObject> {
+    
+        Python::with_gil(|py| {
+            let d = PyDict::new(py);
+            self.named_groups.iter().for_each(|gn| {
+                match gn {
+                    Some(n) => {
+                        let named_capture = self.captures.name(n.as_str());
+                        match named_capture {
+                            Some(m) => {
+                                d.set_item(n, m.as_str().to_string()).unwrap();
+                            },
+                            None => {}
+                        }
+                        //d.set_item(n, ).unwrap();
+                    }
+                    None => {}
+                }
+            });
+            Ok(d.into())
         })
     }
 }
@@ -148,7 +173,7 @@ impl Pattern {
 
     //TODO groupindex
     pub fn r#match(&self, text: &str) -> PyResult<Option<Match>> {
-        fmatch(self, text)
+        r#match(self, text)
     }
 
     
@@ -166,6 +191,13 @@ fn search(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
             Ok(Some(Match {
                 mat: unsafe { std::mem::transmute(mat) },
                 captures: unsafe { std::mem::transmute(caps) },
+                named_groups: pattern.regex.capture_names().map(|name| {
+                    if let Some(n) = name {
+                        Some(n.to_string())
+                    } else {
+                        None
+                    }
+                }).collect(),
                 text: text.to_string(),
             }))
         } else {
@@ -176,8 +208,8 @@ fn search(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
     }
 }
 
-#[pyfunction(name = "fmatch")]
-fn fmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
+#[pyfunction]
+fn r#match(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
     pattern.regex.captures(text).and_then(|captures| {
 
         Ok(if let Some(caps) = captures {
@@ -186,6 +218,13 @@ fn fmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
                    Ok(Some(Match {
                         mat: unsafe { std::mem::transmute(mat) },
                         captures: unsafe { std::mem::transmute(caps) },
+                        named_groups: pattern.regex.capture_names().map(|name| {
+                            if let Some(n) = name {
+                                Some(n.to_string())
+                            } else {
+                                None
+                            }
+                        }).collect(),
                         text: text.to_string(),
                     }))
                 } else {
@@ -213,6 +252,13 @@ fn fullmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
                    Ok(Some(Match {
                         mat: unsafe { std::mem::transmute(mat) },
                         captures: unsafe { std::mem::transmute(caps) },
+                        named_groups: pattern.regex.capture_names().map(|name| {
+                            if let Some(n) = name {
+                                Some(n.to_string())
+                            } else {
+                                None
+                            }
+                        }).collect(),
                         text: text.to_string(),
                     }))
                 } else {
@@ -334,7 +380,7 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
         vec![
             "compile",
             "search",
-            "fmatch",
+            "match",
             "fullmatch",
             "split",
             "findall",
@@ -348,7 +394,7 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(search, m)?)?;
-    m.add_function(wrap_pyfunction!(fmatch, m)?)?;
+    m.add_function(wrap_pyfunction!(r#match, m)?)?;
     m.add_function(wrap_pyfunction!(fullmatch, m)?)?;
     m.add_function(wrap_pyfunction!(split, m)?)?;
     m.add_function(wrap_pyfunction!(findall, m)?)?;
