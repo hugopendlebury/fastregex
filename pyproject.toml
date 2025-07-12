@@ -1,6 +1,6 @@
 [project]
 name = "fastre"
-version = "0.2.6"
+version = "0.2.7"
 description = "A Lightning Fast ⚡ Rust-based regex crate wrapper for Python3 to get faster performance. 👾"
 maintainers = [{ name = "Hugo Pendlebury", email = "hugo.pendlebury@gmail.com" }]
 readme = "README.md"
