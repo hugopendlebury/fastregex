@@ -3,7 +3,12 @@
 
   # fastre: A fast Python Regex Engine with support for fancy features
 
+  ![Star](https://img.shields.io/badge/Please%20Give%20A%20Star%20%E2%AD%90-30323D?style=flat-square)
   ![PyPI - Implementation](https://img.shields.io/pypi/implementation/fastre?style=flat-square)
+  ![GitHub Issues](https://img.shields.io/github/issues/hugopendlebury/fastre?style=flat-square)
+  ![PyPI - Downloads](https://img.shields.io/pypi/dd/fastre?style=flat-square)
+  ![GitHub License](https://img.shields.io/github/license/hugopendlebury/fastre?style=flat-square)
+  ![GitHub last commit](https://img.shields.io/github/last-commit/hugopendlebury/fastre?display_timestamp=committer&style=flat-square)
 
   🚀 Supercharge your Python regex with Rust-powered performance!
 </div>
