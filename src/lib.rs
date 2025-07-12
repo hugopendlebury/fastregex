@@ -22,13 +22,6 @@ struct Match {
 }
 
 #[pyclass]
-struct MatchPartial {
-    #[allow(dead_code)]
-    mat: fancy_regex::Match<'static>,
-    text: String,
-}
-
-#[pyclass]
 struct Scanner {
     // Implement as needed
 }
@@ -236,9 +229,6 @@ fn fullmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
 
 
 }
-
-use fancy_regex::Error;
-
 
 
 
