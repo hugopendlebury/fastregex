@@ -5,6 +5,44 @@ class Pattern:
     regex: Regex
     def __init__(self, regex: Regex): ...
 
+    def split(self, text: str) -> List[str]:
+        """Splits the text using the pattern"""
+        ...
+
+    def fullmatch(pattern: Pattern, text: str) -> Optional[Match]:
+        """Try to apply the pattern to all of the string, returning a match object if the whole string matches."""
+        ...
+
+    def findall(pattern: Pattern, text: str) -> List[str]:
+        """Find all substrings where the regex pattern matches and return them as a list."""
+        ...
+
+    def search(pattern: Pattern, text: str) -> Optional[Match]:
+        """Scan through a string, looking for any location where the regex pattern matches."""
+        ...
+
+    def match(pattern: Pattern, text: str) -> Optional[Match]:
+        """Try to apply the pattern at the start of the string, returning a match object if successful."""
+        ...
+
+    def split(pattern: Pattern, text: str) -> List[str]:
+        """Split the source string by the occurrences of the pattern."""
+        ...
+
+    def sub(pattern: Pattern, repl: str, text: str) -> str:
+        """Return the string obtained by replacing the leftmost non-overlapping occurrences of the pattern in the string by the replacement repl."""
+        ...
+
+    def subn(pattern: Pattern, repl: str, text: str) -> Tuple[str, int]:
+        """Perform the same operation as sub(), but return a tuple (new_string, number_of_subs_made)."""
+        ...
+
+    #'flags',
+    #'groupindex',
+    #'groups',
+    #'scanner',
+    #'pattern',
+
 class Match:
     """A match object returned by a regex search."""
     mat: regex.Match
@@ -58,16 +96,17 @@ def search(pattern: Pattern, text: str) -> Optional[Match]:
     """Scan through a string, looking for any location where the regex pattern matches."""
     ...
 
-def fmatch(pattern: Pattern, text: str) -> Optional[Match]:
+def match(pattern: Pattern, text: str) -> Optional[Match]:
     """Try to apply the pattern at the start of the string, returning a match object if successful."""
-    ...
-
-def fullmatch(pattern: Pattern, text: str) -> Optional[Match]:
-    """Try to apply the pattern to all of the string, returning a match object if the whole string matches."""
     ...
 
 def split(pattern: Pattern, text: str) -> List[str]:
     """Split the source string by the occurrences of the pattern."""
+    ...
+
+
+def fullmatch(pattern: Pattern, text: str) -> Optional[Match]:
+    """Try to apply the pattern to all of the string, returning a match object if the whole string matches."""
     ...
 
 def findall(pattern: Pattern, text: str) -> List[str]:

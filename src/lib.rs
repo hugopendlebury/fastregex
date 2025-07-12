@@ -166,6 +166,24 @@ impl Pattern {
     pub fn r#match(&self, text: &str) -> PyResult<Option<Match>> {
         r#match(self, text)
     }
+
+    pub fn search(&self, text: &str) -> PyResult<Option<Match>> {
+        search(self, text)
+    }
+
+    pub fn split(&self, text: &str) -> PyResult<Vec<String>> {
+        split(self, text)
+    }
+
+    pub fn sub(&self, repl: &str, text: &str) -> PyResult<String> {
+        sub(self, repl, text)
+    }
+
+    fn subn(&self, repl: &str, text: &str) -> PyResult<(String, usize)> {
+        subn(self, repl, text)
+    }
+
+
 }
 
 #[pyfunction]
