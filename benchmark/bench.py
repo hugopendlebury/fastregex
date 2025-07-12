@@ -45,9 +45,9 @@ if __name__ == "__main__":
         ("Subn", benchmark(subn, compile(PATTERN), 'foo', TEXT, iterations=ITERATIONS), True),
         ("Escape", benchmark(escape, TEXT, iterations=ITERATIONS), False),
         ("Email", benchmark(fmatch, compile(EMAIL_PATTERN), "valid@domain.com", iterations=10), True),
-        #("backtrack", benchmark(fmatch, compile("(?i)(a|b|ab)*(?=c)"), BACKTRACK_TEXT, iterations=1), True),
-        #("backreference", benchmark(fmatch, compile(".*?a(bc(?=d)|b)cd"), BACKREF, iterations=1), True),
-        #("backref2", benchmark(fmatch, compile("foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo"), r"(\w+) (\1)", iterations=ITERATIONS), True)
+        ("backtrack", benchmark(fmatch, compile("(?i)(a|b|ab)*(?=c)"), BACKTRACK_TEXT, iterations=1), True),
+        ("backreference", benchmark(fmatch, compile(".*?a(bc(?=d)|b)cd"), BACKREF, iterations=1), True),
+        ("backref2", benchmark(fmatch, compile("foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo"), r"(\w+) (\1)", iterations=ITERATIONS), True)
     ]
 
     re_results = [
@@ -62,9 +62,9 @@ if __name__ == "__main__":
         ("Subn", benchmark(lambda pattern: pattern.subn('foo', TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Escape", benchmark(re.escape, TEXT, iterations=ITERATIONS), False),
         ("Email", benchmark(lambda pattern: pattern.match("valid@domain.com"), re.compile(EMAIL_PATTERN), iterations=10), True),
-        #("backtrack", benchmark(lambda pattern: pattern.match(BACKTRACK_TEXT), re.compile("(?i)(a|b|ab)*(?=c)"), iterations=1), True),
-        #("backreference", benchmark(lambda pattern: pattern.match(BACKREF), re.compile("(?i)(a|b|ab)*(?=c)"), iterations=1), True),
-        #("backref2", benchmark(lambda pattern: pattern.match("foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo"), re.compile(r"(\w+) (\1)"), iterations=ITERATIONS), True)
+        ("backtrack", benchmark(lambda pattern: pattern.match(BACKTRACK_TEXT), re.compile("(?i)(a|b|ab)*(?=c)"), iterations=1), True),
+        ("backreference", benchmark(lambda pattern: pattern.match(BACKREF), re.compile("(?i)(a|b|ab)*(?=c)"), iterations=1), True),
+        ("backref2", benchmark(lambda pattern: pattern.match("foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo"), re.compile(r"(\w+) (\1)"), iterations=ITERATIONS), True)
     ]
 
     max_len = max(len(op) for op, _, _ in fastre_results + re_results)

@@ -14,12 +14,13 @@ fastre is a powerful Python library that wraps the blazing-fast [Rust regex crat
 
 fastre is based on a fork of an earlier implementation called flpc. Whilst flpc offered good performance
 it was based on a rust create which didn't support features such as lookarouds. As such there were many
-instances where it couldn't be used a drop in replacement for the python re module.
+instances where it couldn't be used a drop in replacement for the python re module. It also renamed the match function
+fmatch, and didn't implement some methods on the Match and Pattern objects.
 
 fastre takes a different approach and uses the rust based fancy-regex create. Which means that fastre supports features such as back referencing and lookarounds. One of the key features is that if a regex is considered to be simple then the function will be delegated to the rust based regex crate which
 performs operations in constant time.
 
-If a fancy feature is used than an alternative approach is employed based on parsing the regex, building
+If a fancy feature is used then an alternative approach is employed based on parsing the regex, building
 an Abstract Syntax Tree (AST) and then compiling this into a using an implemention of a Virtual
 Machine to execute the progam.
 
@@ -37,7 +38,6 @@ Machine to execute the progam.
 
 fastre mirrors the `re` module's API, with a few small exceptions:
 
-- Use `fmatch()` instead of `match()` (to avoid conflicts with Python's keyword)
 - When using `group()` on a match object, always provide an index (e.g., `group(0)` for the entire match)
 
 Common functions include:
