@@ -18,6 +18,9 @@ class Match:
         """Return a list of all groups matched by the pattern."""
         ...
         
+    def groupdict(self) -> dict:
+        """Returns a dictionary of named groups and the value"""
+
     def start(self, idx: int) -> Optional[int]:
         """Return the starting position of the match."""
         ...

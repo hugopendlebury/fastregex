@@ -10,7 +10,7 @@
 
 ## 🌟 Why fastre ?
 
-fastre is a powerful Python library that wraps the blazing-fast [Rust regex crate](https://crates.io/crates/fancy-regex), bringing enhanced speed to your regular expression operations. It's designed to be a drop-in replacement for Python's native `re` module, with some minor syntax differences.
+fastre is a powerful Python library that wraps the blazing-fast [Rust fancy-regex crate](https://crates.io/crates/fancy-regex), bringing enhanced speed to your regular expression operations. It's designed to be a drop-in replacement for Python's native `re` module, with some minor syntax differences.
 
 fastre is based on a fork of an earlier implementation called flpc. Whilst flpc offered good performance
 it was based on a rust create which didn't support features such as lookarouds. As such there were many

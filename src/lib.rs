@@ -1,3 +1,4 @@
+use fancy_regex::Expander;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -50,6 +51,21 @@ fn get_regex_cache() -> &'static Mutex<HashMap<(String, u32), Regex>> {
 
 #[pymethods]
 impl Match {
+
+    fn expand(&self, template: &str) -> String {
+
+        let expander = Expander::python();
+        expander.expansion(template, &self.captures)
+
+        /* 
+        let mut buf = String::from("");
+
+        self.captures.expand(template, &mut buf);
+        buf
+        */
+
+    }
+
     fn group(&self, idx: usize) -> Option<String> {
         self.captures.get(idx).map(|m| m.as_str().to_string())
     }
@@ -207,6 +223,13 @@ fn search(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
         Ok(None)
     }
 }
+
+/* 
+#[pyfunction]
+fn r#match(pattern: String, text: &str) -> PyResult<Option<Match>> { 
+
+}
+*/
 
 #[pyfunction]
 fn r#match(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {

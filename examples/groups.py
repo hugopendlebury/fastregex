@@ -27,3 +27,11 @@ for match in matches_iter:
 # Replace matches
 replaced_text = fastre.sub(pattern, r'\2 \1', "Hello World")
 print("Replaced text:", replaced_text)  # World Hello
+
+
+
+#Group dict
+pattern = fastre.compile(r"Homer (?P<middle>.)\. Simpson")
+hay = "Homer J. Simpson"
+named_fields = fastre.match(pattern, hay).groupdict()
+print(f"{named_fields["middle"]}")
