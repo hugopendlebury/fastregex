@@ -50,7 +50,6 @@ fn get_regex_cache() -> &'static Mutex<HashMap<(String, u32), Regex>> {
     REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-
 #[pymethods]
 impl Match {
     fn expand(&self, template: &str) -> String {
@@ -115,7 +114,7 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
     if let Some(regex) = cache.get(&(pattern.to_string(), flags)) {
         return Ok(Pattern {
             regex: regex.clone(),
-            flags: flags
+            flags: flags,
         });
     }
 
@@ -144,7 +143,6 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
 
 #[pymethods]
 impl Pattern {
-
     pub fn __str__(&self) -> String {
         String::from("fastre.Pattern")
     }
@@ -194,8 +192,6 @@ impl Pattern {
     fn pattern(&self) -> String {
         self.regex.to_string()
     }
-
-
 }
 
 #[pyfunction]
@@ -374,7 +370,7 @@ fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
 
     match results {
         Ok(result) => {
-            let parts = result.into_iter().map(|s| String::from(s)).collect();
+            let parts = result.into_iter().map(String::from).collect();
             Ok(parts)
         }
         Err(err) => Err(PyValueError::new_err(err.to_string())),
@@ -389,7 +385,7 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RegexFlags>()?;
     m.add_class::<Constants>()?;
     m.add_class::<Sre>()?;
-    m.add("__version__", "0.2.9")?;
+    //m.add("__version__", "0.2.9")?;
     m.add("__doc__", "")?;
     m.add("__name__", "fastre")?;
     m.add("__package__", "fastre")?;
