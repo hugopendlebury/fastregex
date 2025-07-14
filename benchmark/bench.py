@@ -4,13 +4,10 @@ from random import choices
 from string import ascii_letters, digits
 import fastre
 
-
-import re
-
 def benchmark(func, *args, iterations=1000):  # noqa: D103
     start = time.time()
     for _ in range(iterations):
-        func(*args)
+        r = func(*args)
     end = time.time()
     return (end - start) * 1000  # Convert to milliseconds
 
@@ -20,17 +17,18 @@ TEXT = ''.join(choices(ascii_letters + digits, k=1000))
 ITERATIONS = 100
 EMAIL_PATTERN = r"^(?!\.)(?!.*\.\.)([a-z0-9_'+\-\.]*)[a-z0-9_'+\-]@([a-z0-9][a-z0-9\-]*\.)+[a-z]{2,}$"
 BACKTRACK_TEXT = "ababababababababababababababab"
+#BACKTRACK_TEXT = "abababababababababababababababababababab"
 BACKREF = "hello there this is a test of a back reference abcd with some extra text after"
 
 if __name__ == "__main__":
     fastre_results = [
         ("Compile", benchmark(fastre.compile, PATTERN, iterations=ITERATIONS), True),
-        ("Search", benchmark(lambda pattern: pattern.search(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
         ("Find Match", benchmark(lambda pattern: pattern.match(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Search", benchmark(lambda pattern: pattern.search(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
         ("Full Match", benchmark(lambda pattern: pattern.fullmatch(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
         ("Split", benchmark(lambda pattern: pattern.split(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
         ("Find All", benchmark(lambda pattern: pattern.findall(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
-       # ("Find Iter", benchmark(lambda pattern: list(pattern.finditer(TEXT)), re.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Find Iter", benchmark(lambda pattern: list(pattern.finditer(TEXT)), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Sub", benchmark(lambda pattern: pattern.sub('foo', TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
         ("Subn", benchmark(lambda pattern: pattern.subn('foo', TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
         ("Escape", benchmark(re.escape, TEXT, iterations=ITERATIONS), False),
@@ -43,11 +41,11 @@ if __name__ == "__main__":
     re_results = [
         ("Compile", benchmark(re.compile, PATTERN, iterations=ITERATIONS), True),
         ("Search", benchmark(lambda pattern: pattern.search(TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Find Match", benchmark(lambda pattern: pattern.match(TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Full Match", benchmark(lambda pattern: pattern.fullmatch(TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Split", benchmark(lambda pattern: pattern.split(TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Find Match", benchmark(lambda pattern: pattern.match(TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Find All", benchmark(lambda pattern: pattern.findall(TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
-       # ("Find Iter", benchmark(lambda pattern: list(pattern.finditer(TEXT)), re.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Find Iter", benchmark(lambda pattern: list(pattern.finditer(TEXT)), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Sub", benchmark(lambda pattern: pattern.sub('foo', TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Subn", benchmark(lambda pattern: pattern.subn('foo', TEXT), re.compile(PATTERN), iterations=ITERATIONS), True),
         ("Escape", benchmark(re.escape, TEXT, iterations=ITERATIONS), False),

@@ -1,6 +1,5 @@
 [project]
 name = "fastre"
-version = "0.2.8"
 description = "A Lightning Fast ⚡ Rust-based regex crate wrapper for Python3 to get faster performance. 👾"
 maintainers = [{ name = "Hugo Pendlebury", email = "hugo.pendlebury@gmail.com" }]
 readme = "README.md"
@@ -14,12 +13,15 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/itsmeadarsh2008/flpc"
-Repository = "https://github.com/itsmeadarsh2008/flpc.git"
-"Bug Tracker" = "https://github.com/itsmeadarsh2008/flpc/issues"
+Homepage = "https://github.com/hugopendlebury/fastre"
+Repository = "https://github.com/hugopendlebury/fastre.git"
+"Bug Tracker" = "https://github.com/fastre/fastre/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[package.metadata.maturin]
+include = ["python/fastre/__init__.py"]
 
 [build-system]
 requires = ["maturin>=1.6,<2.0"]

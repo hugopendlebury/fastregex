@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple
+from typing import overload
 
 class Pattern:
     """A compiled regular expression pattern."""
@@ -56,16 +57,28 @@ class Match:
     mat: regex.Match
     def __init__(self, mat: regex.Match): ...
     
-    def group(self, idx: int) -> Optional[str]:
-        """Return the string matched by the group idx."""
+    @overload
+    def group(self, group: str | int) -> Optional[str]:
+        """Return the string matched by the group name or index"""
         ...
         
+    @overload
+    def group(self) -> Optional[str]:
+        """Return the full match"""
+        ...
+
+    @overload
+    def group(self, *args: str | int) -> Tuple[str]:
+        """Return the full match"""
+        ...
+
     def groups(self) -> List[Optional[str]]:
         """Return a list of all groups matched by the pattern."""
         ...
         
     def groupdict(self) -> dict:
         """Returns a dictionary of named groups and the value"""
+        ...
 
     def start(self, idx: int) -> Optional[int]:
         """Return the starting position of the match."""
