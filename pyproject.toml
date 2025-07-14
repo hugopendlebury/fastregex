@@ -20,6 +20,9 @@ Repository = "https://github.com/hugopendlebury/fastre.git"
 [tool.maturin]
 features = ["pyo3/extension-module"]
 
+[package.metadata.maturin]
+include = ["python/fastre/__init__.py"]
+
 [build-system]
 requires = ["maturin>=1.6,<2.0"]
 build-backend = "maturin"

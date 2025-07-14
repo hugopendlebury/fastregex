@@ -3,10 +3,29 @@ use fancy_regex::{Captures, Regex, RegexBuilder};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::types::PyTuple;
 use pyo3::wrap_pyfunction;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+
+enum GroupsReturnType {
+    Tuple(PyTuple),
+    Str(String),
+}
+
+#[derive(FromPyObject, Clone, Debug)]
+enum StringOrInt {
+    Int(Option<i32>),
+    Str(Option<String>),
+}
+
+#[derive(FromPyObject, Clone, Debug)]
+enum GroupArgTypes {
+    Int(i32),
+    Str(String),
+    // Mixed(StringOrInt)
+}
 
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -57,9 +76,79 @@ impl Match {
         expander.expansion(template, &self.captures)
     }
 
-    fn group(&self, idx: usize) -> Option<String> {
-        self.captures.get(idx).map(|m| m.as_str().to_string())
+    fn group_zero(&self) -> Option<String> {
+        group_int(self, 0)
     }
+
+    #[pyo3(signature = (*args))]
+    fn group<'a>(&self, py: Python<'a>, args: Vec<GroupArgTypes>) -> PyResult<Bound<'a, PyAny>> {
+        if args.len() == 0 {
+            let result = group_int(self, 0);
+            match result {
+                Some(s) => {
+                    let py_str = s.into_pyobject(py)?;
+                    Ok(py_str.into_any())
+                }
+                None => Ok(py.None().into_bound(py)),
+            }
+        } else {
+            if args.len() == 1 {
+                let arg = args.get(0).unwrap().clone();
+                let result = self.group_int_name(arg);
+                match result {
+                    Some(s) => {
+                        let py_str = s.into_pyobject(py)?;
+                        Ok(py_str.into_any())
+                    }
+                    None => Ok(py.None().into_bound(py)),
+                }
+            } else {
+                //Ok(py.None().into_bound(py))
+
+                let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
+                for i in 0..args.len() {
+                    let arg = args.get(i).unwrap().clone();
+                    let result = self.group_int_name(arg);
+                    match result {
+                        Some(s) => {
+                            let py_str = s.into_pyobject(py)?;
+                            results.push(py_str.into_any());
+                            //py_str.into_any()
+                        }
+                        None => results.push(py.None().into_bound(py)),
+                    }
+                }
+
+                Ok(PyTuple::new(py, results)?.into_any())
+            }
+        }
+    }
+
+    fn group_int_name(&self, arg: GroupArgTypes) -> Option<String> {
+        match arg {
+            GroupArgTypes::Int(idx) => group_int(self, idx),
+            GroupArgTypes::Str(group_name) => group_str(self, group_name),
+        }
+    }
+
+    /*
+    fn group_int_name(&self, arg: GroupArgTypes) -> Option<String> {
+        match arg {
+            GroupArgTypes::Int(idx)=> {match idx {
+                Some(i) => group_int(self,i),
+                None => None
+            }},
+            GroupArgTypes::Str(group_name)=> { match group_name {
+                Some(name) => group_str(self,name),
+                None => None
+            }},
+            GroupArgTypes::Mixed(string_or_int) => { match string_or_int {
+                StringOrInt::Int(i) => self.group_int_name(GroupArgTypes::Int(i)),
+                StringOrInt::Str(s) => self.group_int_name(GroupArgTypes::Str(s))
+            }}
+        }
+    }
+    */
 
     fn groups(&self) -> Vec<Option<String>> {
         self.captures
@@ -375,6 +464,21 @@ fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
         }
         Err(err) => Err(PyValueError::new_err(err.to_string())),
     }
+}
+
+fn group_str(m: &Match, name: String) -> Option<String> {
+    let named_capture = m.captures.name(name.as_str());
+    if let Some(m) = named_capture {
+        Some(m.as_str().to_string())
+    } else {
+        None
+    }
+}
+
+fn group_int(m: &Match, idx: i32) -> Option<String> {
+    m.captures
+        .get(idx.try_into().unwrap())
+        .map(|m| m.as_str().to_string())
 }
 
 #[pymodule]
