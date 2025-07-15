@@ -9,22 +9,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-enum GroupsReturnType {
-    Tuple(PyTuple),
-    Str(String),
-}
-
-#[derive(FromPyObject, Clone, Debug)]
-enum StringOrInt {
-    Int(Option<i32>),
-    Str(Option<String>),
-}
-
 #[derive(FromPyObject, Clone, Debug)]
 enum GroupArgTypes {
     Int(i32),
     Str(String),
-    // Mixed(StringOrInt)
 }
 
 #[pyclass]
@@ -130,25 +118,6 @@ impl Match {
             GroupArgTypes::Str(group_name) => group_str(self, group_name),
         }
     }
-
-    /*
-    fn group_int_name(&self, arg: GroupArgTypes) -> Option<String> {
-        match arg {
-            GroupArgTypes::Int(idx)=> {match idx {
-                Some(i) => group_int(self,i),
-                None => None
-            }},
-            GroupArgTypes::Str(group_name)=> { match group_name {
-                Some(name) => group_str(self,name),
-                None => None
-            }},
-            GroupArgTypes::Mixed(string_or_int) => { match string_or_int {
-                StringOrInt::Int(i) => self.group_int_name(GroupArgTypes::Int(i)),
-                StringOrInt::Str(s) => self.group_int_name(GroupArgTypes::Str(s))
-            }}
-        }
-    }
-    */
 
     fn groups(&self) -> Vec<Option<String>> {
         self.captures
