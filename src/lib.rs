@@ -22,10 +22,9 @@ struct Pattern {
     flags: u32,
 }
 
-
 #[pyclass]
 #[derive(Debug)]
-struct Match{
+struct Match {
     #[allow(dead_code)]
     mat: fancy_regex::Match<'static>,
     captures: Captures<'static>,
@@ -202,7 +201,6 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
 
 #[pymethods]
 impl Pattern {
-
     pub fn findall(&self, text: &str) -> PyResult<Vec<String>> {
         findall(self, text)
     }
