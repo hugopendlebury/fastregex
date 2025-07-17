@@ -48,7 +48,6 @@ class Pattern:
 
     #'flags',
     #'groupindex',
-    #'groups',
     #'scanner',
 
 
@@ -61,7 +60,7 @@ class Match:
     def group(self, group: str | int) -> Optional[str]:
         """Return the string matched by the group name or index"""
         ...
-        
+
     @overload
     def group(self) -> Optional[str]:
         """Return the full match"""

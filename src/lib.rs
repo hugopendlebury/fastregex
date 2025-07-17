@@ -22,9 +22,10 @@ struct Pattern {
     flags: u32,
 }
 
+
 #[pyclass]
 #[derive(Debug)]
-struct Match {
+struct Match{
     #[allow(dead_code)]
     mat: fancy_regex::Match<'static>,
     captures: Captures<'static>,
@@ -201,21 +202,10 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
 
 #[pymethods]
 impl Pattern {
-    pub fn __str__(&self) -> String {
-        String::from("fastre.Pattern")
-    }
 
     pub fn findall(&self, text: &str) -> PyResult<Vec<String>> {
         findall(self, text)
     }
-
-    /*
-    pub fn finditer(&self, text: &str) -> PyResult<Vec<Match>> {
-
-        finditer(self, text)
-
-    }
-    */
 
     pub fn fullmatch(&self, text: &str) -> PyResult<Option<Match>> {
         fullmatch(self, text)
@@ -249,6 +239,20 @@ impl Pattern {
 
     fn pattern(&self) -> String {
         self.regex.to_string()
+    }
+
+    fn groups(&self) ->  Vec<Option<String>> {
+        let matches = r#match(self, self.regex.as_str());
+        match matches {
+            Ok(opt_m) => {
+                if let Some(m) = opt_m {
+                    m.groups()
+                } else{
+                    Vec::new()
+                }
+            }
+            Err(e) => Vec::new()
+        }
     }
 }
 
