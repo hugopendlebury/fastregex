@@ -241,18 +241,9 @@ impl Pattern {
         self.regex.to_string()
     }
 
-    fn groups(&self) ->  Vec<Option<String>> {
-        let matches = r#match(self, self.regex.as_str());
-        match matches {
-            Ok(opt_m) => {
-                if let Some(m) = opt_m {
-                    m.groups()
-                } else{
-                    Vec::new()
-                }
-            }
-            Err(e) => Vec::new()
-        }
+    #[getter]
+    fn groups(&self) -> usize {
+        self.regex.captures_len() - 1
     }
 }
 
