@@ -409,16 +409,14 @@ fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
 fn subn(pattern: &Pattern, repl: &str, text: &str, count: usize) -> PyResult<(String, usize)> {
     log::info!("count is {}", count);
     let expander = Expander::python();
-    let mut capture_len = usize::default();
+    let mut replacement_groups = usize::default();
     let result: Result<std::borrow::Cow<'_, str>, fancy_regex::Error> =
         pattern.regex.try_replacen(text, count, |caps: &Captures| {
             let expansion = expander.expansion(repl, caps);
-            capture_len = caps.len();
-            log::info!("value of caps.len = {}", caps.len());
+            replacement_groups += 1;
             expansion
         });
-    log::info!("value of caps.len = {}", capture_len);
-    Ok((result.unwrap().to_string(), capture_len))
+    Ok((result.unwrap().to_string(), replacement_groups))
 }
 
 #[pyfunction]
