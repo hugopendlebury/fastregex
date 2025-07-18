@@ -3,6 +3,7 @@ use fancy_regex::{Captures, Regex, RegexBuilder};
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::pyfunction;
 use pyo3::types::PyDict;
 use pyo3::types::PyTuple;
 use pyo3::wrap_pyfunction;
@@ -232,8 +233,9 @@ impl Pattern {
         sub(self, repl, text)
     }
 
-    fn subn(&self, repl: &str, text: &str) -> PyResult<(String, usize)> {
-        subn(self, repl, text)
+    #[pyo3(signature = (repl, text, count=0))]
+    fn subn(&self, repl: &str, text: &str, count: usize) -> PyResult<(String, usize)> {
+        subn(self, repl, text, count)
     }
 
     fn pattern(&self) -> String {
@@ -403,10 +405,20 @@ fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
-fn subn(pattern: &Pattern, repl: &str, text: &str) -> PyResult<(String, usize)> {
-    let result = pattern.regex.replace_all(text, repl);
-    let replaced_text = result.clone().into_owned();
-    Ok((replaced_text, result.len()))
+#[pyo3(signature = (pattern, repl, text, count=0))]
+fn subn(pattern: &Pattern, repl: &str, text: &str, count: usize) -> PyResult<(String, usize)> {
+    log::info!("count is {}", count);
+    let expander = Expander::python();
+    let mut capture_len = usize::default();
+    let result: Result<std::borrow::Cow<'_, str>, fancy_regex::Error> =
+        pattern.regex.try_replacen(text, count, |caps: &Captures| {
+            let expansion = expander.expansion(repl, caps);
+            capture_len = caps.len();
+            log::info!("value of caps.len = {}", caps.len());
+            expansion
+        });
+    log::info!("value of caps.len = {}", capture_len);
+    Ok((result.unwrap().to_string(), capture_len))
 }
 
 #[pyfunction]
@@ -450,6 +462,7 @@ fn group_int(m: &Match, idx: &i32) -> Option<String> {
 
 #[pymodule]
 fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();
     m.add_class::<Pattern>()?;
     m.add_class::<Match>()?;
     m.add_class::<Scanner>()?;
@@ -618,7 +631,7 @@ mod tests {
     #[test]
     fn test_subn_replacement_with_count() {
         let pattern = compile(r"\d+", None).unwrap();
-        let result = subn(&pattern, "X", "abc123def456").unwrap();
+        let result = subn(&pattern, "X", "abc123def456", 0).unwrap();
         assert_eq!(result.0, "abcXdefX");
         // Note: The current implementation's count might not be accurate
         // This test may need adjustment based on actual behavior
