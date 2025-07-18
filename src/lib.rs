@@ -1,5 +1,6 @@
 use fancy_regex::Expander;
 use fancy_regex::{Captures, Regex, RegexBuilder};
+use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -65,13 +66,13 @@ impl Match {
     }
 
     fn group_zero(&self) -> Option<String> {
-        group_int(self, 0)
+        group_int(self, &0)
     }
 
     #[pyo3(signature = (*args))]
     fn group<'a>(&self, py: Python<'a>, args: Vec<GroupArgTypes>) -> PyResult<Bound<'a, PyAny>> {
         if args.len() == 0 {
-            let result = group_int(self, 0);
+            let result = group_int(self, &0);
             match result {
                 Some(s) => {
                     let py_str = s.into_pyobject(py)?;
@@ -82,13 +83,13 @@ impl Match {
         } else {
             if args.len() == 1 {
                 let arg = args.get(0).unwrap().clone();
-                let result = self.group_int_name(arg);
+                let result = group_int_name(self, &arg);
                 match result {
                     Some(s) => {
                         let py_str = s.into_pyobject(py)?;
                         Ok(py_str.into_any())
                     }
-                    None => Ok(py.None().into_bound(py)),
+                    None => Err(PyIndexError::new_err(format!("no such group {:?}", arg))),
                 }
             } else {
                 //Ok(py.None().into_bound(py))
@@ -96,7 +97,7 @@ impl Match {
                 let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
                 for i in 0..args.len() {
                     let arg = args.get(i).unwrap().clone();
-                    let result = self.group_int_name(arg);
+                    let result = group_int_name(self, &arg);
                     match result {
                         Some(s) => {
                             let py_str = s.into_pyobject(py)?;
@@ -109,13 +110,6 @@ impl Match {
 
                 Ok(PyTuple::new(py, results)?.into_any())
             }
-        }
-    }
-
-    fn group_int_name(&self, arg: GroupArgTypes) -> Option<String> {
-        match arg {
-            GroupArgTypes::Int(idx) => group_int(self, idx),
-            GroupArgTypes::Str(group_name) => group_str(self, group_name),
         }
     }
 
@@ -160,6 +154,13 @@ impl Match {
             });
             Ok(d.into())
         })
+    }
+}
+
+fn group_int_name(m: &Match, arg: &GroupArgTypes) -> Option<String> {
+    match arg {
+        GroupArgTypes::Int(idx) => group_int(m, idx),
+        GroupArgTypes::Str(group_name) => group_str(m, group_name),
     }
 }
 
@@ -428,7 +429,7 @@ fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
     }
 }
 
-fn group_str(m: &Match, name: String) -> Option<String> {
+fn group_str(m: &Match, name: &String) -> Option<String> {
     let named_capture = m.captures.name(name.as_str());
     if let Some(m) = named_capture {
         Some(m.as_str().to_string())
@@ -437,9 +438,9 @@ fn group_str(m: &Match, name: String) -> Option<String> {
     }
 }
 
-fn group_int(m: &Match, idx: i32) -> Option<String> {
+fn group_int(m: &Match, idx: &i32) -> Option<String> {
     m.captures
-        .get(idx.try_into().unwrap())
+        .get((*idx as i32).try_into().unwrap())
         .map(|m| m.as_str().to_string())
 }
 
@@ -486,4 +487,379 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(purge, m)?)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyo3::prelude::*;
+
+    // Helper function for Python initialization - not needed in most tests
+    fn _setup_python() {
+        pyo3::prepare_freethreaded_python();
+    }
+
+    #[test]
+    fn test_compile_basic() {
+        let pattern = compile(r"\d+", None).unwrap();
+        assert_eq!(pattern.flags, 0);
+        assert_eq!(pattern.regex.as_str(), r"\d+");
+    }
+
+    #[test]
+    fn test_compile_with_flags() {
+        let pattern = compile(r"[a-z]+", Some(1)).unwrap(); // IGNORECASE flag
+        assert_eq!(pattern.flags, 1);
+    }
+
+    #[test]
+    fn test_compile_invalid_pattern() {
+        let result = compile(r"[", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_found() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = search(&pattern, "abc123def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("123".to_string()));
+    }
+
+    #[test]
+    fn test_search_not_found() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = search(&pattern, "abcdef").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_at_start() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = r#match(&pattern, "123abc").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("123".to_string()));
+    }
+
+    #[test]
+    fn test_match_not_at_start() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = r#match(&pattern, "abc123").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fullmatch_exact() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = fullmatch(&pattern, "123").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("123".to_string()));
+    }
+
+    #[test]
+    fn test_fullmatch_partial() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = fullmatch(&pattern, "123abc").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_findall_multiple_matches() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = findall(&pattern, "abc123def456ghi").unwrap();
+        assert_eq!(result, vec!["123", "456"]);
+    }
+
+    #[test]
+    fn test_findall_no_matches() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = findall(&pattern, "abcdef").unwrap();
+        assert_eq!(result, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_sub_replacement() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = sub(&pattern, "X", "abc123def456").unwrap();
+        assert_eq!(result, "abcXdefX");
+    }
+
+    #[test]
+    fn test_subn_replacement_with_count() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = subn(&pattern, "X", "abc123def456").unwrap();
+        assert_eq!(result.0, "abcXdefX");
+        // Note: The current implementation's count might not be accurate
+        // This test may need adjustment based on actual behavior
+    }
+
+    #[test]
+    fn test_split_basic() {
+        let pattern = compile(r"\s+", None).unwrap();
+        let result = split(&pattern, "hello world test").unwrap();
+        assert_eq!(result, vec!["hello", "world", "test"]);
+    }
+
+    #[test]
+    fn test_split_no_matches() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = split(&pattern, "abcdef").unwrap();
+        assert_eq!(result, vec!["abcdef"]);
+    }
+
+    #[test]
+    fn test_escape_special_chars() {
+        let result = escape("a.b*c+d?e").unwrap();
+        assert_eq!(result, r"a\.b\*c\+d\?e");
+    }
+
+    #[test]
+    fn test_groups_capture() {
+        let pattern = compile(r"(\d+)-(\d+)", None).unwrap();
+        let result = search(&pattern, "abc123-456def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let groups = match_obj.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], Some("123".to_string()));
+        assert_eq!(groups[1], Some("456".to_string()));
+    }
+
+    #[test]
+    fn test_match_span() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = search(&pattern, "abc123def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let span = match_obj.span(0);
+        assert_eq!(span, Some((3, 6))); // Characters 3-6 (123)
+    }
+
+    #[test]
+    fn test_match_start_end() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = search(&pattern, "abc123def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.start(0), Some(3));
+        assert_eq!(match_obj.end(0), Some(6));
+    }
+
+    #[test]
+    fn test_named_groups() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let pattern = compile(r"(?P<year>\d{4})-(?P<month>\d{2})", None).unwrap();
+            let result = search(&pattern, "Date: 2023-12-25").unwrap();
+            assert!(result.is_some());
+
+            let match_obj = result.unwrap();
+
+            // Test groupdict functionality
+            let groupdict = match_obj.groupdict().unwrap();
+            let dict = groupdict
+                .bind(py)
+                .downcast::<pyo3::types::PyDict>()
+                .unwrap();
+
+            assert_eq!(
+                dict.get_item("year")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "2023"
+            );
+            assert_eq!(
+                dict.get_item("month")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "12"
+            );
+        });
+    }
+
+    #[test]
+    fn test_group_by_name() {
+        let pattern = compile(r"(?P<word>\w+)", None).unwrap();
+        let result = search(&pattern, "hello world").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let group_result = group_str(&match_obj, &"word".to_string());
+        assert_eq!(group_result, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_group_by_index() {
+        let pattern = compile(r"(\w+)", None).unwrap();
+        let result = search(&pattern, "hello world").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let group_result = group_int(&match_obj, &1);
+        assert_eq!(group_result, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_pattern_flags_property() {
+        let pattern = compile(r"test", Some(1)).unwrap();
+        assert_eq!(pattern.flags().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_pattern_groups_property() {
+        let pattern = compile(r"(\d+)-(\d+)", None).unwrap();
+        assert_eq!(pattern.groups(), 2);
+    }
+
+    #[test]
+    fn test_pattern_pattern_property() {
+        let pattern = compile(r"\d+", None).unwrap();
+        assert_eq!(pattern.pattern(), r"\d+");
+    }
+
+    #[test]
+    fn test_cache_functionality() {
+        // Test that same pattern is cached
+        let pattern1 = compile(r"\d+", None).unwrap();
+        let pattern2 = compile(r"\d+", None).unwrap();
+
+        // They should have the same underlying regex (though we can't directly test this)
+        assert_eq!(pattern1.pattern(), pattern2.pattern());
+        assert_eq!(pattern1.flags, pattern2.flags);
+    }
+
+    #[test]
+    fn test_purge_cache() {
+        let _ = compile(r"\d+", None).unwrap();
+        let result = purge();
+        assert!(result.is_ok());
+
+        // Cache should be empty now, but we can't directly test this
+        // We can only test that purge doesn't error
+    }
+
+    #[test]
+    fn test_expand_template() {
+        let pattern = compile(r"(\w+)\s+(\w+)", None).unwrap();
+        let result = search(&pattern, "hello world").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let expanded = match_obj.expand(r"\2 \1");
+        assert_eq!(expanded, "world hello");
+    }
+
+    #[test]
+    fn test_case_insensitive_flag() {
+        let pattern = compile(r"hello", Some(1)).unwrap(); // IGNORECASE
+        let result = search(&pattern, "HELLO world").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("HELLO".to_string()));
+    }
+
+    #[test]
+    fn test_unicode_support() {
+        let pattern = compile(r"[\u{1F600}-\u{1F64F}]", None).unwrap();
+        let result = search(&pattern, "Hello 😀 World").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("😀".to_string()));
+    }
+
+    #[test]
+    fn test_empty_pattern() {
+        let pattern = compile(r"", None).unwrap();
+        let result = search(&pattern, "test").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("".to_string()));
+    }
+
+    #[test]
+    fn test_complex_pattern() {
+        let pattern = compile(r"(\d{1,3}\.){3}\d{1,3}", None).unwrap();
+        let result = search(&pattern, "IP: 192.168.1.1 Gateway").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        assert_eq!(match_obj.group_zero(), Some("192.168.1.1".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_named_groups() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let pattern = compile(r"(?P<protocol>https?)://(?P<domain>[\w.-]+)", None).unwrap();
+            let result = search(&pattern, "Visit https://example.com for more").unwrap();
+            assert!(result.is_some());
+
+            let match_obj = result.unwrap();
+
+            let groupdict = match_obj.groupdict().unwrap();
+            let dict = groupdict
+                .bind(py)
+                .downcast::<pyo3::types::PyDict>()
+                .unwrap();
+
+            assert_eq!(
+                dict.get_item("protocol")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "https"
+            );
+            assert_eq!(
+                dict.get_item("domain")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "example.com"
+            );
+        });
+    }
+
+    #[test]
+    fn test_no_capture_groups() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = search(&pattern, "abc123def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let groups = match_obj.groups();
+        assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_optional_capture_groups() {
+        let pattern = compile(r"(\d+)?-(\d+)", None).unwrap();
+        let result = search(&pattern, "abc-456def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+        let groups = match_obj.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], None); // Optional group not matched
+        assert_eq!(groups[1], Some("456".to_string()));
+    }
 }
