@@ -395,7 +395,11 @@ fn finditer(pattern: &Pattern, text: &str) -> PyResult<Vec<Match>> {
 */
 #[pyfunction]
 fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
-    Ok(pattern.regex.replace_all(text, repl).into_owned())
+    let expander = Expander::python();
+    Ok(pattern
+        .regex
+        .replace_all(text, |caps: &Captures| expander.expansion(repl, caps))
+        .into_owned())
 }
 
 #[pyfunction]
@@ -588,6 +592,27 @@ mod tests {
         let pattern = compile(r"\d+", None).unwrap();
         let result = sub(&pattern, "X", "abc123def456").unwrap();
         assert_eq!(result, "abcXdefX");
+    }
+
+    #[test]
+    fn test_sub_replacement_numbers_groups() {
+        let pattern = compile(r"(\w+) (\w+)", None).unwrap();
+        let result = sub(&pattern, r"\2, \1 \2.", "James Bond").unwrap();
+        assert_eq!(result, "Bond, James Bond.");
+    }
+
+    #[test]
+    fn test_sub_replacement_named_groups() {
+        let pattern = compile(r"(?P<first>\w+) (?P<second>\w+)", None).unwrap();
+        let result = sub(&pattern, r"\g<second>, \g<first> \g<second>.", "James Bond").unwrap();
+        assert_eq!(result, "Bond, James Bond.");
+    }
+
+    #[test]
+    fn test_sub_replacement_named_groups_and_positional() {
+        let pattern = compile(r"(?P<first>\w+) (?P<second>\w+)", None).unwrap();
+        let result = sub(&pattern, r"\g<second>, \1 \2.", "James Bond").unwrap();
+        assert_eq!(result, "Bond, James Bond.");
     }
 
     #[test]
