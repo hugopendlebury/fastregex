@@ -631,8 +631,42 @@ mod tests {
         let pattern = compile(r"\d+", None).unwrap();
         let result = subn(&pattern, "X", "abc123def456", 0).unwrap();
         assert_eq!(result.0, "abcXdefX");
-        // Note: The current implementation's count might not be accurate
-        // This test may need adjustment based on actual behavior
+    }
+
+    #[test]
+    fn test_subn_replacement_no_count_all_matches() {
+        let pattern = compile(r"(\d{2})/(\d{2})/(\d{4})", None).unwrap();
+        let text = "Events: 12/25/2023, 01/15/2024, 07/04/2023, 01/07/2027, 01/07/2027, 01/07/2027";
+        let result = subn(&pattern, r"\3-\2-\1", text, 0).unwrap();
+        assert_eq!(
+            result.0,
+            "Events: 2023-25-12, 2024-15-01, 2023-04-07, 2027-07-01, 2027-07-01, 2027-07-01"
+        );
+        assert_eq!(result.1, 6);
+    }
+
+    #[test]
+    fn test_subn_replacement_no_count_five_matches() {
+        let pattern = compile(r"(\d{2})/(\d{2})/(\d{4})(,)", None).unwrap();
+        let text = "Events: 12/25/2023, 01/15/2024, 07/04/2023, 01/07/2027, 01/07/2027, 01/07/2027";
+        let result = subn(&pattern, r"\3-\2-\1", text, 0).unwrap();
+        assert_eq!(
+            result.0,
+            "Events: 2023-25-12 2024-15-01 2023-04-07 2027-07-01 2027-07-01 01/07/2027"
+        );
+        assert_eq!(result.1, 5);
+    }
+
+    #[test]
+    fn test_subn_replacement_count_four() {
+        let pattern = compile(r"(\d{2})/(\d{2})/(\d{4})", None).unwrap();
+        let text = "Events: 12/25/2023, 01/15/2024, 07/04/2023, 01/07/2027, 01/07/2027, 01/07/2027";
+        let result = subn(&pattern, r"\3-\2-\1", text, 4).unwrap();
+        assert_eq!(
+            result.0,
+            "Events: 2023-25-12, 2024-15-01, 2023-04-07, 2027-07-01, 01/07/2027, 01/07/2027"
+        );
+        assert_eq!(result.1, 4);
     }
 
     #[test]
