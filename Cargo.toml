@@ -9,7 +9,10 @@ name = "fastre"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = {version = "0.25.1", features = ["multiple-pymethods"] }
+pyo3 = {version = "0.25.1", features = ["multiple-pymethods", "macros"] }
+log = "0.4.27"
+pyo3-log = "0.12.4"
 fancy-regex  = "0.15.0"
 lazy_static = "1.5.0"
 bitflags = "2.9.1"
+ctor = "0.4.2"
