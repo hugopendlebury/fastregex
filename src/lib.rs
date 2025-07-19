@@ -2,12 +2,15 @@ use fancy_regex::Expander;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
 use pyo3::pyfunction;
 use pyo3::types::PyDict;
 use pyo3::types::PyTuple;
 use pyo3::wrap_pyfunction;
+use pyo3::FromPyObject;
+use pyo3::{prelude::*, IntoPyObjectExt};
+use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::result;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
@@ -15,6 +18,24 @@ use std::sync::OnceLock;
 enum GroupArgTypes {
     Int(i32),
     Str(String),
+}
+
+#[derive(FromPyObject, Clone, Debug)]
+enum NumberString {
+    USize(usize),
+    Str(String),
+}
+
+#[derive(FromPyObject)]
+enum Replacement {
+    String(String),
+    Callable(PyObject),
+}
+
+#[derive(FromPyObject, Clone, Debug)]
+enum PatternOrString {
+    Str(String),
+    Pattern(Pattern),
 }
 
 #[pyclass]
@@ -35,6 +56,31 @@ struct Match {
 }
 
 #[pyclass]
+#[derive(Debug)]
+struct MatchNew {
+    // Store the actual match data instead of references
+    start: usize,
+    end: usize,
+    text: String,
+    full_match: String,
+    captures: Vec<Option<String>>,
+    named_groups: Vec<Option<String>>,
+}
+
+#[pyclass]
+#[derive(Debug, Clone)]
+struct MatchLazy {
+    string: String,
+    // Use OnceLock instead of OnceCell
+    full_match: OnceLock<String>,
+    captures: OnceLock<Vec<Option<String>>>,
+    named_groups: HashMap<String, usize>,
+    match_start: usize,
+    match_end: usize,
+    capture_positions: Vec<Option<(usize, usize)>>,
+}
+
+#[pyclass]
 struct Scanner {
     // Implement as needed
 }
@@ -49,9 +95,6 @@ enum RegexFlags {
 
 #[pyclass]
 struct Constants;
-
-#[pyclass]
-struct Sre;
 
 static REGEX_CACHE: OnceLock<Mutex<HashMap<(String, u32), Regex>>> = OnceLock::new();
 
@@ -290,6 +333,204 @@ fn r#match_str(pattern: String, text: &str) -> PyResult<Option<Match>> {
     }
 }
 
+fn create_pattern(pattern: PatternOrString) -> Result<Pattern, fancy_regex::Error> {
+    match pattern {
+        PatternOrString::Str(s) => match Regex::new(&s) {
+            Ok(r) => Ok(Pattern { regex: r, flags: 0 }),
+            Err(e) => Err(e),
+        },
+        PatternOrString::Pattern(p) => Ok(p),
+    }
+}
+
+#[pyfunction]
+pub(crate) fn matchnew(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
+    let pat = create_pattern(pattern);
+
+    let match_type = pat.and_then(|p| {
+        p.regex
+            .captures(text)
+            .and_then(|captures| {
+                Ok(if let Some(caps) = captures {
+                    if let Some(mat) = caps.get(0) {
+                        Ok(Some(MatchLazy {
+                            string: text.to_string(),
+                            // Initialize OnceLock fields as empty
+                            full_match: OnceLock::new(),
+                            captures: OnceLock::new(),
+                            named_groups: p
+                                .regex
+                                .capture_names()
+                                .enumerate()
+                                .filter_map(|(index, name)| match name {
+                                    Some(n) => Some((n.to_string(), index)),
+                                    None => None,
+                                })
+                                .collect(),
+                            //.collect(),
+
+                            // Store positions for lazy computation
+                            match_start: mat.start(),
+                            match_end: mat.end(),
+                            capture_positions: caps
+                                .iter()
+                                .map(|c| c.map(|m| (m.start(), m.end())))
+                                .collect(),
+                        }))
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                })
+            })
+            .unwrap_or(Ok(None))
+    });
+
+    match match_type {
+        Ok(r) => Ok(r),
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "{}",
+            e
+        ))),
+    }
+}
+
+fn start_end<'a>(
+    py: Python<'a>,
+    mat: &MatchLazy,
+    element: Option<NumberString>,
+    match_accessor: impl Fn(&MatchLazy) -> usize,
+    capture_position_accessor: impl Fn((usize, usize)) -> usize,
+) -> PyResult<Bound<'a, PyAny>> {
+    log::info!("self = {:?}", mat);
+
+    match element {
+        Some(args) => match args {
+            NumberString::USize(i) => {
+                if i == 0 {
+                    Ok(match_accessor(mat).into_pyobject(py)?.into_any())
+                } else {
+                    //get the result from the vector
+                    let positions = mat.capture_positions.get(i);
+                    match positions {
+                        Some(pos) => match pos {
+                            Some(p) => {
+                                Ok(capture_position_accessor(*p).into_pyobject(py)?.into_any())
+                            }
+                            None => Err(PyIndexError::new_err(format!("no such group {:?}", i))),
+                        },
+                        None => Err(PyIndexError::new_err(format!("no such group {:?}", i))),
+                    }
+                }
+            }
+            NumberString::Str(s) => {
+                let group_index = mat.named_groups.get(&s);
+                match group_index {
+                    Some(gi) => start_end(
+                        py,
+                        mat,
+                        Some(NumberString::USize(*gi)),
+                        match_accessor,
+                        capture_position_accessor,
+                    ),
+                    None => Err(PyIndexError::new_err(format!("no such group {:?}", s))),
+                }
+            }
+        },
+        None => Ok(match_accessor(mat).into_pyobject(py)?.into_any()),
+    }
+}
+
+#[pymethods]
+impl MatchLazy {
+    fn groupdict(&self) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            let d = PyDict::new(py);
+            self.named_groups.iter().for_each(|gn| {
+                let name = gn.0;
+                let match_index = gn.1;
+                let capture_positions = self.capture_positions.get(*match_index);
+                match capture_positions {
+                    Some(ocp) => match ocp {
+                        Some(span) => {
+                            d.set_item(name, self.string[span.0..span.1].to_string());
+                        }
+                        None => todo!(),
+                    },
+                    None => todo!(),
+                }
+            });
+            Ok(d.into())
+        })
+    }
+
+    #[pyo3(signature = (element = None))]
+    fn start<'a>(
+        &self,
+        py: Python<'a>,
+        element: Option<NumberString>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        start_end(py, self, element, |m| m.match_start, |t| t.0)
+    }
+
+    #[pyo3(signature = (element = None))]
+    fn end<'a>(&self, py: Python<'a>, element: Option<NumberString>) -> PyResult<Bound<'a, PyAny>> {
+        start_end(py, self, element, |m| m.match_end, |t| t.1)
+    }
+
+    #[pyo3(signature = (element = None))]
+    fn span<'a>(
+        &self,
+        py: Python<'a>,
+        element: Option<NumberString>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        match element {
+            Some(args) => match args {
+                NumberString::USize(i) => {
+                    if i == 0 {
+                        Ok((self.match_start, self.match_end)
+                            .into_pyobject(py)?
+                            .into_any())
+                    } else {
+                        //get the result from the vector
+                        let positions = self.capture_positions.get(i);
+                        match positions {
+                            Some(pos) => match pos {
+                                Some(p) => Ok(p.into_pyobject(py)?.into_any()),
+                                None => {
+                                    Err(PyIndexError::new_err(format!("no such group {:?}", i)))
+                                }
+                            },
+                            None => Err(PyIndexError::new_err(format!("no such group {:?}", i))),
+                        }
+                    }
+                }
+                NumberString::Str(s) => {
+                    let group_index = self.named_groups.get(&s);
+                    match group_index {
+                        Some(gi) => self.span(py, Some(NumberString::USize(*gi))),
+                        None => Err(PyIndexError::new_err(format!("no such group {:?}", s))),
+                    }
+                }
+            },
+            None => Ok((self.match_start, self.match_end)
+                .into_pyobject(py)?
+                .into_any()),
+        }
+    }
+
+    #[getter]
+    fn string(&self) -> String {
+        self.string.clone()
+    }
+
+    #[getter]
+    fn endpos(&self) -> usize {
+        self.match_end
+    }
+}
+
 #[pyfunction(name = "match")]
 fn r#match(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
     pattern
@@ -395,6 +636,49 @@ fn finditer(pattern: &Pattern, text: &str) -> PyResult<Vec<Match>> {
     Ok(matches)
 }
 */
+
+/*
+#[pyfunction]
+fn sub(pattern: &Pattern, repl: Replacement, text: &str) -> PyResult<String> {
+    Python::with_gil(|py| {
+        match &repl {
+            Replacement::String(s) => {
+                // Handle string replacement with expansion
+                let expander = Expander::python();
+                Ok(pattern.regex.replace_all(text, |caps: &Captures| {
+                    expander.expansion(s.as_str(), caps)
+                }).into_owned())
+            },
+            Replacement::Callable(callable) => {
+                // Handle callable replacement manually
+                let mut result = String::new();
+                let mut last_match = 0;
+
+                for caps in pattern.regex.captures_iter(text) {
+                    let caps = caps.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Regex error: {}", e)))?;
+                    let m = caps.get(0).unwrap();
+
+                    // Add text before match
+                    result.push_str(&text[last_match..m.start()]);
+
+                    // Get replacement from callable
+                    let match_str = m.as_str();
+                    let py_result = callable.call1(py, (match_str,))?;
+                    let replacement = py_result.extract::<String>(py)?;
+                    result.push_str(&replacement);
+
+                    last_match = m.end();
+                }
+
+                // Add remaining text
+                result.push_str(&text[last_match..]);
+                Ok(result)
+            }
+        }
+    })
+}
+*/
+
 #[pyfunction]
 fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
     let expander = Expander::python();
@@ -466,7 +750,7 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Scanner>()?;
     m.add_class::<RegexFlags>()?;
     m.add_class::<Constants>()?;
-    m.add_class::<Sre>()?;
+    m.add_class::<MatchLazy>()?;
     //m.add("__version__", "0.2.9")?;
     m.add("__doc__", "")?;
     m.add("__name__", "fastre")?;
@@ -485,6 +769,7 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "subn",
             "escape",
             "purge",
+            "matchnew",
         ],
     )?;
 
@@ -501,6 +786,8 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(escape, m)?)?;
     m.add_function(wrap_pyfunction!(purge, m)?)?;
 
+    m.add_function(wrap_pyfunction!(matchnew, m)?)?;
+
     Ok(())
 }
 
@@ -510,7 +797,8 @@ mod tests {
     use pyo3::prelude::*;
 
     // Helper function for Python initialization - not needed in most tests
-    fn _setup_python() {
+    #[ctor::ctor]
+    fn setup_python() {
         pyo3::prepare_freethreaded_python();
     }
 
@@ -931,5 +1219,279 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0], None); // Optional group not matched
         assert_eq!(groups[1], Some("456".to_string()));
+    }
+
+    #[test]
+    fn test_matchnew_not_matching_is_none() {
+        let p = PatternOrString::Str(String::from("Hello"));
+        let m = matchnew(p, "Good Bye").unwrap();
+        assert!(m.is_none())
+    }
+
+    #[test]
+    fn test_matchnew_start_with_string_pattern_no_args() {
+        let p = PatternOrString::Str(String::from("Hello"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.start(py, None);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(0, value);
+        });
+    }
+
+    #[test]
+    fn test_matchnew_start_with_string_pattern_int_no_match() {
+        let p = PatternOrString::Str(String::from("Hello"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+
+        Python::with_gil(|py| {
+            let result = m.start(py, Some(NumberString::USize(1)));
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_matchnew_end_with_string_pattern_no_args() {
+        let p = PatternOrString::Str(String::from("Hello"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let result = m.end(py, None);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(5, value);
+        });
+    }
+
+    #[test]
+    fn test_matchnew_end_with_string_pattern_int_no_match() {
+        let p = PatternOrString::Str(String::from("Hello"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::USize(1)));
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_start_with_groups_first_int_group() {
+        let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.start(py, Some(NumberString::USize(1)));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(0, value);
+        });
+    }
+
+    #[test]
+    fn test_start_with_groups_second_int_group() {
+        let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.start(py, Some(NumberString::USize(2)));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(6, value);
+        });
+    }
+
+    #[test]
+    fn test_end_with_groups_first_int_group() {
+        let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::USize(1)));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(5, value);
+        });
+    }
+
+    #[test]
+    fn test_end_with_groups_second_int_group() {
+        let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::USize(2)));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(11, value);
+        });
+    }
+
+    #[test]
+    fn test_end_with_groups_third_int_group() {
+        let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::USize(3)));
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_start_with_groups_first_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.start(py, Some(NumberString::Str("first".to_string())));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(0, value);
+        });
+    }
+
+    #[test]
+    fn test_start_with_groups_second_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.start(py, Some(NumberString::Str("second".to_string())));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(6, value);
+        });
+    }
+
+    #[test]
+    fn test_end_with_groups_first_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::Str("first".to_string())));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(5, value);
+        });
+    }
+
+    #[test]
+    fn test_end_with_groups_second_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::Str("second".to_string())));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: i32 = py_result.extract().unwrap();
+            assert_eq!(11, value);
+        });
+    }
+
+    #[test]
+    fn test_end_with_groups_third_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.end(py, Some(NumberString::Str("hugo".to_string())));
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_string() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        assert_eq!("Hello World", m.string())
+    }
+
+    #[test]
+    fn test_span_with_groups_first_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.span(py, Some(NumberString::Str("first".to_string())));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (i32, i32) = py_result.extract().unwrap();
+            assert_eq!((0, 5), value);
+        });
+    }
+
+    #[test]
+    fn test_span_with_groups_second_string_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.span(py, Some(NumberString::Str("second".to_string())));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (i32, i32) = py_result.extract().unwrap();
+            assert_eq!((6, 11), value);
+        });
+    }
+
+    #[test]
+    fn test_span_with_groups_first_int_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.span(py, Some(NumberString::USize(1)));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (i32, i32) = py_result.extract().unwrap();
+            assert_eq!((0, 5), value);
+        });
+    }
+
+    #[test]
+    fn test_span_with_groups_second_int_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.span(py, Some(NumberString::USize(2)));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (i32, i32) = py_result.extract().unwrap();
+            assert_eq!((6, 11), value);
+        });
+    }
+
+    #[test]
+    fn test_span_with_groups_no_arg() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.span(py, None);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (i32, i32) = py_result.extract().unwrap();
+            assert_eq!((0, 11), value);
+        });
+    }
+
+    #[test]
+    fn test_endpos() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let result = m.endpos();
+        assert_eq!(11, result);
     }
 }
