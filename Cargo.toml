@@ -1,11 +1,11 @@
 [package]
-name = "fastre"
+name = "fastregex"
 edition = "2021"
 version = "0.2.12"  # Placeholder - setuptools-scm should override this
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "fastre"
+name = "fastregex"
 crate-type = ["cdylib"]
 
 [dependencies]

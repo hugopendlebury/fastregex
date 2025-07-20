@@ -155,7 +155,7 @@ from pytest import mark
 )
 def test_regex_compile_and_search(
     arguments: Dict[Literal["description", "expected", "pattern", "test_string"], str],
-    library: Literal["fastre", "re"]
+    library: Literal["fastregex", "re"]
 ) -> None:
     __import__(library)
     module: ModuleType = modules[library]
