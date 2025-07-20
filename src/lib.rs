@@ -469,6 +469,25 @@ impl MatchLazy {
         }
     }
 
+    fn matchlazy_group_string(&self, group_name: String) -> Option<String> {
+        let index = self.named_groups.get(&group_name);
+        match index {
+            Some(i) => self.matchlazy_group_int(*i),
+            None => None
+        }
+    }
+
+    fn group_to_pyobject<'a>(&self, py: Python<'a>, group_value: Option<String>) -> Result<Bound<'a, PyAny>, PyErr> {
+        match group_value {
+            Some(s) => {
+                let py_str = s.into_pyobject(py)?;
+                Ok(py_str.into_any())
+            }
+            None => Ok(py.None().into_bound(py)),
+        }
+    }
+
+
     #[pyo3(signature = (*args))]
     fn group<'a>(&self, py: Python<'a>, args: Vec<NumberString>) -> PyResult<Bound<'a, PyAny>> {
         if args.len() == 0 {
@@ -482,39 +501,35 @@ impl MatchLazy {
                     let arg = args.get(0).unwrap().clone();
                     match arg {
                         NumberString::USize(i) => {
-                            let group_value = self.matchlazy_group_int(i);
-                            match group_value {
-                                Some(s) => {
-                                    let py_str = s.into_pyobject(py)?;
-                                    Ok(py_str.into_any())
-                                }
-                                None => Ok(py.None().into_bound(py)),
-                            }
+                            self.group_to_pyobject(py, self.matchlazy_group_int(i))
                         }
-                        NumberString::Str(s) => !todo!()
+                        NumberString::Str(s) => {
+                            self.group_to_pyobject(py, self.matchlazy_group_string(s))
+                        }
                     }
 
             }  
             else {
-                let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
-                for i in 0..args.len() {
-                    let arg = args.get(i).unwrap().clone();
-                    match arg {
-                        NumberString::USize(i) => {
-                            let group_value = self.matchlazy_group_int(i);
-                            match group_value {
-                                Some(s) => {
-                                    let py_str = s.into_pyobject(py)?;
-                                    results.push(py_str.into_any());
-                                }
-                                None => results.push(py.None().into_bound(py)),
-                            }
-                        }
-                        NumberString::Str(s) => !todo!()
+                // Helper function to convert Option<String> to Python object
+                let to_py_object = |group_value: Option<String>| -> PyResult<Bound<'a, PyAny>> {
+                    match group_value {
+                        Some(s) => Ok(s.into_pyobject(py)?.into_any()),
+                        None => Err(PyIndexError::new_err(format!("no such group"))),
                     }
-                }
+                };
 
-                Ok(PyTuple::new(py, results)?.into_any())
+                let results: PyResult<Vec<Bound<'a, PyAny>>> = (0..args.len())
+                .map(|i| {
+                    let arg = args.get(i).unwrap().clone();
+                    let group_value = match arg {
+                        NumberString::USize(i) => self.matchlazy_group_int(i),
+                        NumberString::Str(s) => self.matchlazy_group_string(s),
+                    };
+                    to_py_object(group_value)
+                })
+                .collect();
+            
+                Ok(PyTuple::new(py, results?)?.into_any())
             }
         }
         
