@@ -442,27 +442,13 @@ fn start_end<'a>(
     }
 }
 
-fn new_group_str(m: &Match, name: &String) -> Option<String> {
-    let named_capture = m.captures.name(name.as_str());
-    if let Some(m) = named_capture {
-        Some(m.as_str().to_string())
-    } else {
-        None
-    }
-}
-
-
-
 #[pymethods]
 impl MatchLazy {
-
     fn matchlazy_group_int(&self, idx: usize) -> Option<String> {
         let capture_positions = self.capture_positions.get(idx);
         match capture_positions {
             Some(ocp) => match ocp {
-                Some(span) => {
-                    Some(self.string[span.0..span.1].to_string())
-                }
+                Some(span) => Some(self.string[span.0..span.1].to_string()),
                 None => None,
             },
             None => None,
@@ -473,43 +459,40 @@ impl MatchLazy {
         let index = self.named_groups.get(&group_name);
         match index {
             Some(i) => self.matchlazy_group_int(*i),
-            None => None
+            None => None,
         }
     }
 
-    fn group_to_pyobject<'a>(&self, py: Python<'a>, group_value: Option<String>) -> Result<Bound<'a, PyAny>, PyErr> {
+    fn group_to_pyobject<'a>(
+        &self,
+        py: Python<'a>,
+        group_value: Option<String>,
+    ) -> Result<Bound<'a, PyAny>, PyErr> {
         match group_value {
             Some(s) => {
                 let py_str = s.into_pyobject(py)?;
                 Ok(py_str.into_any())
             }
-            None => Ok(py.None().into_bound(py)),
+            None => Err(PyIndexError::new_err(format!("no such group"))),
         }
     }
-
 
     #[pyo3(signature = (*args))]
     fn group<'a>(&self, py: Python<'a>, args: Vec<NumberString>) -> PyResult<Bound<'a, PyAny>> {
         if args.len() == 0 {
-
             Ok(self.matchlazy_group_int(0).into_pyobject(py)?.into_any())
-
-        } 
-        else {
+        } else {
             if args.len() == 1 {
-
-                    let arg = args.get(0).unwrap().clone();
-                    match arg {
-                        NumberString::USize(i) => {
-                            self.group_to_pyobject(py, self.matchlazy_group_int(i))
-                        }
-                        NumberString::Str(s) => {
-                            self.group_to_pyobject(py, self.matchlazy_group_string(s))
-                        }
+                let arg = args.get(0).unwrap().clone();
+                match arg {
+                    NumberString::USize(i) => {
+                        self.group_to_pyobject(py, self.matchlazy_group_int(i))
                     }
-
-            }  
-            else {
+                    NumberString::Str(s) => {
+                        self.group_to_pyobject(py, self.matchlazy_group_string(s))
+                    }
+                }
+            } else {
                 // Helper function to convert Option<String> to Python object
                 let to_py_object = |group_value: Option<String>| -> PyResult<Bound<'a, PyAny>> {
                     match group_value {
@@ -519,40 +502,35 @@ impl MatchLazy {
                 };
 
                 let results: PyResult<Vec<Bound<'a, PyAny>>> = (0..args.len())
-                .map(|i| {
-                    let arg = args.get(i).unwrap().clone();
-                    let group_value = match arg {
-                        NumberString::USize(i) => self.matchlazy_group_int(i),
-                        NumberString::Str(s) => self.matchlazy_group_string(s),
-                    };
-                    to_py_object(group_value)
-                })
-                .collect();
-            
+                    .map(|i| {
+                        let arg = args.get(i).unwrap().clone();
+                        let group_value = match arg {
+                            NumberString::USize(i) => self.matchlazy_group_int(i),
+                            NumberString::Str(s) => self.matchlazy_group_string(s),
+                        };
+                        to_py_object(group_value)
+                    })
+                    .collect();
+
                 Ok(PyTuple::new(py, results?)?.into_any())
             }
         }
-        
-
     }
 
-
     fn regs<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
-
         let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
 
         for cap in self.capture_positions.iter() {
-           match cap {
+            match cap {
                 Some(c) => {
                     let tuple = (c.0, c.1).into_pyobject(py)?.into_any();
                     results.push(tuple);
-                },
+                }
                 None => (),
             }
         }
 
         Ok(PyTuple::new(py, results)?.into_any())
-
     }
 
     fn groupdict(&self) -> PyResult<PyObject> {
@@ -564,7 +542,10 @@ impl MatchLazy {
                 let obj = self.matchlazy_group_int(*match_index).into_pyobject(py);
                 let _ = match obj {
                     Ok(o) => d.set_item(name, o.into_any()),
-                    Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))
+                    Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "{}",
+                        e
+                    ))),
                 };
             });
             Ok(d.into())
@@ -1599,5 +1580,182 @@ mod tests {
         let m = matchnew(p, "Hello World").unwrap().unwrap();
         let result = m.endpos();
         assert_eq!(11, result);
+    }
+
+    #[test]
+    fn test_match_new_group_no_args() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, Vec::new());
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: String = py_result.extract().unwrap();
+            assert_eq!("Hello World", value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_int_arg_group_zero() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::USize(0)]);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: String = py_result.extract().unwrap();
+            assert_eq!("Hello World", value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_int_arg_group_one() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::USize(1)]);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: String = py_result.extract().unwrap();
+            assert_eq!("Hello", value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_int_arg_group_two() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::USize(2)]);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: String = py_result.extract().unwrap();
+            assert_eq!("World", value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_int_arg_group_two_and_one() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::USize(2), NumberString::USize(1)]);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (String, String) = py_result.extract().unwrap();
+            assert_eq!(("World".to_string(), "Hello".to_string()), value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_int_arg_group_invalid_index() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::USize(4)]);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_int_arg_group_invalid_index_throws_no_such_index() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::USize(4)]);
+
+            match result {
+                Ok(_) => panic!("Expected an error, but got Ok"),
+                Err(err) => {
+                    // Check it's the right exception type
+                    assert!(err.is_instance_of::<PyIndexError>(py));
+
+                    // Optionally check the error message
+                    let err_msg = err.to_string();
+                    assert!(err_msg.contains("IndexError: no such group"));
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_string_arg_group_first() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::Str("first".to_string())]);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: String = py_result.extract().unwrap();
+            assert_eq!("Hello", value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_string_arg_group_second() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(py, vec![NumberString::Str("second".to_string())]);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: String = py_result.extract().unwrap();
+            assert_eq!("World", value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_string_arg_group_second_and_first() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(
+                py,
+                vec![
+                    NumberString::Str("second".to_string()),
+                    NumberString::Str("first".to_string()),
+                ],
+            );
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (String, String) = py_result.extract().unwrap();
+            assert_eq!(("World".to_string(), "Hello".to_string()), value);
+        });
+    }
+
+    #[test]
+    fn test_match_new_group_string_int_args() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.group(
+                py,
+                vec![
+                    NumberString::USize(1),
+                    NumberString::Str("second".to_string()),
+                    NumberString::Str("first".to_string()),
+                ],
+            );
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+
+            let value: (String, String, String) = py_result.extract().unwrap();
+            assert_eq!(
+                (
+                    "Hello".to_string(),
+                    "World".to_string(),
+                    "Hello".to_string()
+                ),
+                value
+            );
+        });
     }
 }
