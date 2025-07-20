@@ -2,7 +2,7 @@ import re  # noqa: D100
 import time
 from random import choices
 from string import ascii_letters, digits
-import fastre
+import fastregex
 
 def benchmark(func, *args, iterations=1000):  # noqa: D103
     start = time.time()
@@ -22,20 +22,20 @@ BACKREF = "hello there this is a test of a back reference abcd with some extra t
 
 if __name__ == "__main__":
     fastre_results = [
-        ("Compile", benchmark(fastre.compile, PATTERN, iterations=ITERATIONS), True),
-        ("Find Match", benchmark(lambda pattern: pattern.match(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Search", benchmark(lambda pattern: pattern.search(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Full Match", benchmark(lambda pattern: pattern.fullmatch(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Split", benchmark(lambda pattern: pattern.split(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Find All", benchmark(lambda pattern: pattern.findall(TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Compile", benchmark(fastregex.compile, PATTERN, iterations=ITERATIONS), True),
+        ("Find Match", benchmark(lambda pattern: pattern.match(TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Search", benchmark(lambda pattern: pattern.search(TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Full Match", benchmark(lambda pattern: pattern.fullmatch(TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Split", benchmark(lambda pattern: pattern.split(TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Find All", benchmark(lambda pattern: pattern.findall(TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
         ("Find Iter", benchmark(lambda pattern: list(pattern.finditer(TEXT)), re.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Sub", benchmark(lambda pattern: pattern.sub('foo', TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
-        ("Subn", benchmark(lambda pattern: pattern.subn('foo', TEXT), fastre.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Sub", benchmark(lambda pattern: pattern.sub('foo', TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
+        ("Subn", benchmark(lambda pattern: pattern.subn('foo', TEXT), fastregex.compile(PATTERN), iterations=ITERATIONS), True),
         ("Escape", benchmark(re.escape, TEXT, iterations=ITERATIONS), False),
-        ("Email", benchmark(lambda pattern: pattern.match("valid@domain.com"), fastre.compile(EMAIL_PATTERN), iterations=ITERATIONS), True),
-        ("backtrack", benchmark(lambda pattern: pattern.match(BACKTRACK_TEXT), fastre.compile("(?i)(a|b|ab)*(?=c)"), iterations=ITERATIONS), True),
-        ("backreference", benchmark(lambda pattern: pattern.match(BACKREF), fastre.compile("(?i)(a|b|ab)*(?=c)"), iterations=ITERATIONS), True),
-        ("backref2", benchmark(lambda pattern: pattern.match("foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo"), fastre.compile(r"(\w+) (\1)"), iterations=ITERATIONS), True)
+        ("Email", benchmark(lambda pattern: pattern.match("valid@domain.com"), fastregex.compile(EMAIL_PATTERN), iterations=ITERATIONS), True),
+        ("backtrack", benchmark(lambda pattern: pattern.match(BACKTRACK_TEXT), fastregex.compile("(?i)(a|b|ab)*(?=c)"), iterations=ITERATIONS), True),
+        ("backreference", benchmark(lambda pattern: pattern.match(BACKREF), fastregex.compile("(?i)(a|b|ab)*(?=c)"), iterations=ITERATIONS), True),
+        ("backref2", benchmark(lambda pattern: pattern.match("foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo foo"), fastregex.compile(r"(\w+) (\1)"), iterations=ITERATIONS), True)
     ]
 
     re_results = [
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     ]
 
     max_len = max(len(op) for op, _, _ in fastre_results + re_results)
-    print(f"{'Operation':{max_len}} | {'fastre (ms)':<10} | {'re (ms)':<10} | {'Used Regex':<10} | {'Faster':<10}")
+    print(f"{'Operation':{max_len}} | {'fastregex (ms)':<15} | {'re (ms)':<10} | {'Used Regex':<10} | {'Faster':<10}")
     print("-" * (max_len + 45))
 
     fastre_times = []
@@ -64,8 +64,8 @@ if __name__ == "__main__":
 
     for (op, fastre_time, used_regex_flpc), (_, re_time, used_regex_re) in zip(fastre_results, re_results):
         used_regex = "Yes" if used_regex_flpc and used_regex_re else "No"
-        faster = "fastre" if fastre_time < re_time else "re"
-        print(f"{op:{max_len}} | {fastre_time:<10.5f} | {re_time:<10.5f} | {used_regex:<10} | {faster:<10}")
+        faster = "fastregex" if fastre_time < re_time else "re"
+        print(f"{op:{max_len}} | {fastre_time:<15.5f} | {re_time:<10.5f} | {used_regex:<10} | {faster:<10}")
         fastre_times.append(fastre_time)
         re_times.append(re_time)
 

@@ -442,24 +442,115 @@ fn start_end<'a>(
     }
 }
 
+fn new_group_str(m: &Match, name: &String) -> Option<String> {
+    let named_capture = m.captures.name(name.as_str());
+    if let Some(m) = named_capture {
+        Some(m.as_str().to_string())
+    } else {
+        None
+    }
+}
+
+
+
 #[pymethods]
 impl MatchLazy {
+
+    fn matchlazy_group_int(&self, idx: usize) -> Option<String> {
+        let capture_positions = self.capture_positions.get(idx);
+        match capture_positions {
+            Some(ocp) => match ocp {
+                Some(span) => {
+                    Some(self.string[span.0..span.1].to_string())
+                }
+                None => None,
+            },
+            None => None,
+        }
+    }
+
+    #[pyo3(signature = (*args))]
+    fn group<'a>(&self, py: Python<'a>, args: Vec<NumberString>) -> PyResult<Bound<'a, PyAny>> {
+        if args.len() == 0 {
+
+            Ok(self.matchlazy_group_int(0).into_pyobject(py)?.into_any())
+
+        } 
+        else {
+            if args.len() == 1 {
+
+                    let arg = args.get(0).unwrap().clone();
+                    match arg {
+                        NumberString::USize(i) => {
+                            let group_value = self.matchlazy_group_int(i);
+                            match group_value {
+                                Some(s) => {
+                                    let py_str = s.into_pyobject(py)?;
+                                    Ok(py_str.into_any())
+                                }
+                                None => Ok(py.None().into_bound(py)),
+                            }
+                        }
+                        NumberString::Str(s) => !todo!()
+                    }
+
+            }  
+            else {
+                let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
+                for i in 0..args.len() {
+                    let arg = args.get(i).unwrap().clone();
+                    match arg {
+                        NumberString::USize(i) => {
+                            let group_value = self.matchlazy_group_int(i);
+                            match group_value {
+                                Some(s) => {
+                                    let py_str = s.into_pyobject(py)?;
+                                    results.push(py_str.into_any());
+                                }
+                                None => results.push(py.None().into_bound(py)),
+                            }
+                        }
+                        NumberString::Str(s) => !todo!()
+                    }
+                }
+
+                Ok(PyTuple::new(py, results)?.into_any())
+            }
+        }
+        
+
+    }
+
+
+    fn regs<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
+
+        let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
+
+        for cap in self.capture_positions.iter() {
+           match cap {
+                Some(c) => {
+                    let tuple = (c.0, c.1).into_pyobject(py)?.into_any();
+                    results.push(tuple);
+                },
+                None => (),
+            }
+        }
+
+        Ok(PyTuple::new(py, results)?.into_any())
+
+    }
+
     fn groupdict(&self) -> PyResult<PyObject> {
         Python::with_gil(|py| {
             let d = PyDict::new(py);
             self.named_groups.iter().for_each(|gn| {
                 let name = gn.0;
                 let match_index = gn.1;
-                let capture_positions = self.capture_positions.get(*match_index);
-                match capture_positions {
-                    Some(ocp) => match ocp {
-                        Some(span) => {
-                            d.set_item(name, self.string[span.0..span.1].to_string());
-                        }
-                        None => todo!(),
-                    },
-                    None => todo!(),
-                }
+                let obj = self.matchlazy_group_int(*match_index).into_pyobject(py);
+                let _ = match obj {
+                    Ok(o) => d.set_item(name, o.into_any()),
+                    Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))
+                };
             });
             Ok(d.into())
         })
@@ -743,7 +834,7 @@ fn group_int(m: &Match, idx: &i32) -> Option<String> {
 }
 
 #[pymodule]
-fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyo3_log::init();
     m.add_class::<Pattern>()?;
     m.add_class::<Match>()?;
@@ -753,8 +844,8 @@ fn fastre(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MatchLazy>()?;
     //m.add("__version__", "0.2.9")?;
     m.add("__doc__", "")?;
-    m.add("__name__", "fastre")?;
-    m.add("__package__", "fastre")?;
+    m.add("__name__", "fastregex")?;
+    m.add("__package__", "fastregex")?;
     m.add(
         "__all__",
         vec![

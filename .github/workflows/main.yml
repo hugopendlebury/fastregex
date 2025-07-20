@@ -64,7 +64,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install fastre --find-links dist --force-reinstall
+          pip install fastregex --find-links dist --force-reinstall
           pip install pytest
           pytest
       - name: pytest
@@ -80,7 +80,7 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
-            pip3 install fastre --find-links dist --force-reinstall
+            pip3 install fastregex --find-links dist --force-reinstall
             pytest
 
   musllinux:
@@ -124,7 +124,7 @@ jobs:
             apk add py3-pip py3-virtualenv
             python3 -m virtualenv .venv
             source .venv/bin/activate
-            pip install fastre --no-index --find-links dist --force-reinstall
+            pip install fastregex --no-index --find-links dist --force-reinstall
             pip install pytest
             pytest
       - name: pytest
@@ -141,7 +141,7 @@ jobs:
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install pytest
-            pip install fastre --find-links dist --force-reinstall
+            pip install fastregex --find-links dist --force-reinstall
             pytest
 
   windows:
@@ -177,7 +177,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/Scripts/activate
-          pip install fastre --find-links dist --force-reinstall
+          pip install fastregex--find-links dist --force-reinstall
           pip install pytest
           pytest
 
@@ -211,7 +211,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install fastre --find-links dist --force-reinstall
+          pip install fastregex --find-links dist --force-reinstall
           pip install pytest
           pytest
 
