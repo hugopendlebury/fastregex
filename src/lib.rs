@@ -490,22 +490,29 @@ impl MatchLazy {
     }
 
     #[pyo3(signature = (default=None))]
-    fn groups<'a>(&self, py: Python<'a>, default: Option<&str>) -> PyResult<Bound<'a, PyAny>> {
-        let results: Result<Vec<Bound<'a, PyAny>>, PyErr> = self
-            .capture_positions
-            .iter()
-            .map(|cap| match cap {
-                Some(c) => Ok::<pyo3::Bound<'_, pyo3::PyAny>, PyErr>(
-                    self.string[c.0..c.1]
-                        .to_string()
-                        .into_pyobject(py)?
-                        .into_any(),
-                ),
-                None => Ok(py.None().into_bound(py)),
-            })
-            .collect();
+    fn groups<'a>(
+        &self,
+        py: Python<'a>,
+        default: Option<&str>,
+    ) -> Result<Bound<'a, PyTuple>, PyErr> {
+        let mut elements: Vec<pyo3::Bound<'_, pyo3::PyAny>> = Vec::new();
 
-        Ok(PyTuple::new(py, results)?.into_any())
+        for cap in self.capture_positions.iter().skip(1) {
+            let item = match cap {
+                Some(c) => self.string[c.0..c.1]
+                    .to_string()
+                    .into_pyobject(py)?
+                    .into_any(),
+                None => match default {
+                    Some(val) => val.to_string().into_pyobject(py)?.into_any(),
+                    None => py.None().into_pyobject(py)?.into_any(),
+                },
+            };
+            elements.push(item);
+        }
+
+        let x = PyTuple::new(py, elements);
+        x
     }
 
     #[pyo3(signature = (*args))]
@@ -1775,5 +1782,57 @@ mod tests {
                 value
             );
         });
+    }
+
+    #[test]
+    fn test_groups_all_capturing() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
+        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        Python::with_gil(|py| {
+            let result = m.groups(py, None);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+            let value: (String, String) = py_result.extract().unwrap();
+            assert_eq!(("Hello".to_string(), "World".to_string()), value);
+        })
+    }
+
+    #[test]
+    fn test_groups_one_none_capturing() {
+        let p = PatternOrString::Str(String::from(
+            r"(?P<first>Hello)\s(?P<second>World)\s(?P<numbers>\d+)?",
+        ));
+        let m = matchnew(p, "Hello World some extra text which isn't numbers")
+            .unwrap()
+            .unwrap();
+        Python::with_gil(|py| {
+            let result = m.groups(py, None);
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+            let (first, second, third): (String, String, Option<String>) =
+                py_result.extract().unwrap();
+            assert_eq!(first, "Hello");
+            assert_eq!(second, "World");
+            assert!(third.is_none());
+        })
+    }
+
+    #[test]
+    fn test_groups_one_none_capturing_with_default() {
+        let p = PatternOrString::Str(String::from(
+            r"(?P<first>Hello)\s(?P<second>World)\s(?P<numbers>\d+)?",
+        ));
+        let m = matchnew(p, "Hello World some extra text which isn't numbers")
+            .unwrap()
+            .unwrap();
+        Python::with_gil(|py| {
+            let result = m.groups(py, Some("N/A"));
+            assert!(result.is_ok());
+            let py_result = result.unwrap();
+            let (first, second, third): (String, String, String) = py_result.extract().unwrap();
+            assert_eq!(first, "Hello");
+            assert_eq!(second, "World");
+            assert_eq!(third, "N/A");
+        })
     }
 }
