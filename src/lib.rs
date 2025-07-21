@@ -1,5 +1,6 @@
 use fancy_regex::Expander;
 use fancy_regex::{Captures, Regex, RegexBuilder};
+use log::log;
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyValueError;
 use pyo3::pyfunction;
@@ -75,6 +76,7 @@ struct MatchLazy {
     full_match: OnceLock<String>,
     captures: OnceLock<Vec<Option<String>>>,
     named_groups: HashMap<String, usize>,
+    named_group_indexes: HashMap<usize, String>,
     match_start: usize,
     match_end: usize,
     capture_positions: Vec<Option<(usize, usize)>>,
@@ -367,6 +369,15 @@ pub(crate) fn matchnew(pattern: PatternOrString, text: &str) -> PyResult<Option<
                                     None => None,
                                 })
                                 .collect(),
+                            named_group_indexes: p
+                                .regex
+                                .capture_names()
+                                .enumerate()
+                                .filter_map(|(index, name)| match name {
+                                    Some(n) => Some((index, n.to_string())),
+                                    None => None,
+                                })
+                                .collect(),
                             //.collect(),
 
                             // Store positions for lazy computation
@@ -640,6 +651,32 @@ impl MatchLazy {
     #[getter]
     fn endpos(&self) -> usize {
         self.match_end
+    }
+
+    #[getter]
+    fn lastgroup<'a>(&self) -> Option<&String> {
+        let x = self
+            .capture_positions
+            .iter()
+            .skip(1)
+            .enumerate()
+            .filter_map(|(index, captures)| {
+                let captured_name = self.named_group_indexes.get(&(index + 1));
+                if captures.is_some() {
+                    Some((index + 1, captured_name))
+                } else {
+                    None
+                }
+            })
+            .rev()
+            .take(1)
+            .map(|f| match f.1 {
+                Some(group_name) => Some(group_name),
+                None => None,
+            })
+            .last()
+            .flatten();
+        x
     }
 }
 
@@ -1834,5 +1871,47 @@ mod tests {
             assert_eq!(second, "World");
             assert_eq!(third, "N/A");
         })
+    }
+
+    #[test]
+    fn test_last_group_all_caputuring() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>\w+) (?P<last>\w+)"));
+        let m = matchnew(p, "John Doe").unwrap().unwrap();
+
+        let last_group = m.lastgroup();
+
+        assert_eq!("last", last_group.unwrap())
+    }
+
+    #[test]
+    fn test_last_group_middle_non_caputuring() {
+        let p = PatternOrString::Str(String::from(
+            r"(?P<first>\w+)(?P<middle> \w+)?(?P<last> \w+)",
+        ));
+        let m = matchnew(p, "John Doe").unwrap().unwrap();
+
+        let last_group = m.lastgroup();
+
+        assert_eq!("last", last_group.unwrap())
+    }
+
+    #[test]
+    fn test_last_group_or_group() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>\w+)|(?P<last>\w+)"));
+        let m = matchnew(p, "John Doe").unwrap().unwrap();
+
+        let last_group = m.lastgroup();
+
+        assert_eq!("first", last_group.unwrap())
+    }
+
+    #[test]
+    fn test_last_group_last_group_not_named() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>\w+)(\w+)"));
+        let m = matchnew(p, "John Doe").unwrap().unwrap();
+
+        let last_group = m.lastgroup();
+
+        assert!(last_group.is_none())
     }
 }
