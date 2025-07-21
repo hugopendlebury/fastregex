@@ -654,7 +654,7 @@ impl MatchLazy {
     }
 
     #[getter]
-    fn lastgroup<'a>(&self) -> Option<&String> {
+    fn lastgroup(&self) -> Option<&String> {
         let x = self
             .capture_positions
             .iter()
@@ -676,6 +676,28 @@ impl MatchLazy {
             })
             .last()
             .flatten();
+        x
+    }
+
+    #[getter]
+    fn lastindex(&self) -> Option<usize> {
+        let x = self
+            .capture_positions
+            .iter()
+            .skip(1)
+            .enumerate()
+            .filter_map(|(index, captures)| {
+                let captured_name = self.named_group_indexes.get(&(index + 1));
+                if captures.is_some() {
+                    Some((index + 1, captured_name))
+                } else {
+                    None
+                }
+            })
+            .rev()
+            .take(1)
+            .map(|f| f.0)
+            .last();
         x
     }
 }
@@ -1913,5 +1935,41 @@ mod tests {
         let last_group = m.lastgroup();
 
         assert!(last_group.is_none())
+    }
+
+    #[test]
+    fn test_last_index_first_group_match() {
+        let p = PatternOrString::Str(String::from(r"(\w+)\s+(\d+)?"));
+        let m = matchnew(p, "John ").unwrap().unwrap();
+        let last_index = m.lastindex();
+
+        assert_eq!(1, last_index.unwrap())
+    }
+
+    #[test]
+    fn test_last_index_all_groups_match() {
+        let p = PatternOrString::Str(String::from(r"(\w+)\s+(\d+)?"));
+        let m = matchnew(p, "John 58").unwrap().unwrap();
+        let last_index = m.lastindex();
+
+        assert_eq!(2, last_index.unwrap())
+    }
+
+    #[test]
+    fn test_last_index_no_groups_match() {
+        let p = PatternOrString::Str(String::from(r"(\d+)?"));
+        let m = matchnew(p, "John").unwrap().unwrap();
+        let last_index = m.lastindex();
+
+        assert!(last_index.is_none())
+    }
+
+    #[test]
+    fn test_last_index_with_named_groups() {
+        let p = PatternOrString::Str(String::from(r"(?P<first>\w+) (?P<last>\w+)"));
+        let m = matchnew(p, "John Doe").unwrap().unwrap();
+        let last_index = m.lastindex();
+
+        assert_eq!(2, last_index.unwrap())
     }
 }
