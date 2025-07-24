@@ -71,6 +71,7 @@ struct MatchNew {
 #[pyclass]
 #[derive(Debug, Clone)]
 struct MatchLazy {
+    re: String,
     string: String,
     // Use OnceLock instead of OnceCell
     full_match: OnceLock<String>,
@@ -356,6 +357,7 @@ pub(crate) fn matchnew(pattern: PatternOrString, text: &str) -> PyResult<Option<
                 Ok(if let Some(caps) = captures {
                     if let Some(mat) = caps.get(0) {
                         Ok(Some(MatchLazy {
+                            re: p.regex.as_str().to_string(),
                             string: text.to_string(),
                             // Initialize OnceLock fields as empty
                             full_match: OnceLock::new(),
@@ -455,6 +457,12 @@ fn start_end<'a>(
 
 #[pymethods]
 impl MatchLazy {
+
+    #[getter]
+    fn re(&self) -> Option<String> {
+        Some(self.re.clone())
+    }
+
     fn matchlazy_group_int<'a>(
         &self,
         py: Python<'a>,
@@ -1972,4 +1980,14 @@ mod tests {
 
         assert_eq!(2, last_index.unwrap())
     }
+
+    #[test]
+    fn test_re_returns_the_expression() {
+        let p = PatternOrString::Str(String::from(r"(\d+)?"));
+        let m = matchnew(p, "John").unwrap().unwrap();
+        let result = m.re();
+
+        assert_eq!(r"(\d+)?", result.unwrap())
+    }
+
 }
