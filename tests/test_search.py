@@ -3,7 +3,9 @@
 from itertools import product
 from sys import modules
 from types import ModuleType
+import importlib
 from typing import Dict, Literal
+
 
 from pytest import mark
 
@@ -150,7 +152,7 @@ from pytest import mark
                'expected': False
            },
         ),
-        ("fastre", "re"),
+        ("fastregex", "re"),
     )
 )
 def test_regex_compile_and_search(
@@ -158,7 +160,7 @@ def test_regex_compile_and_search(
     library: Literal["fastregex", "re"]
 ) -> None:
     __import__(library)
-    module: ModuleType = modules[library]
+    module: ModuleType = importlib.import_module(library)
     pattern: module.Pattern = module.compile(arguments["pattern"])  # type: ignore
     match = module.search(pattern, arguments["test_string"]) is not None
     assert match == arguments["expected"], f"Failed: {arguments['description']}"
