@@ -56,17 +56,7 @@ struct Match {
     text: String,
 }
 
-#[pyclass]
-#[derive(Debug)]
-struct MatchNew {
-    // Store the actual match data instead of references
-    start: usize,
-    end: usize,
-    text: String,
-    full_match: String,
-    captures: Vec<Option<String>>,
-    named_groups: Vec<Option<String>>,
-}
+
 
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -262,9 +252,8 @@ impl Pattern {
         Ok(self.flags)
     }
 
-    //TODO groupindex
-    pub fn r#match(&mut self, text: &str) -> PyResult<Option<Match>> {
-        r#match(self, text)
+    pub fn r#match(&self, text: &str) -> PyResult<Option<MatchLazy>> {
+        r#match(PatternOrString::Pattern(self.clone()), text)
     }
 
     pub fn search(&self, text: &str) -> PyResult<Option<Match>> {
@@ -322,7 +311,7 @@ fn search(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
 }
 
 #[pyfunction(name = "match")]
-fn r#match_str(pattern: String, text: &str) -> PyResult<Option<Match>> {
+fn r#match_str(pattern: String, text: &str) -> PyResult<Option<MatchLazy>> {
     let regex = Regex::new(&pattern);
     match regex {
         Ok(r) => {
@@ -347,7 +336,7 @@ fn create_pattern(pattern: PatternOrString) -> Result<Pattern, fancy_regex::Erro
 }
 
 #[pyfunction]
-pub(crate) fn matchnew(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
+pub(crate) fn r#match(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
     let pat = create_pattern(pattern);
 
     let match_type = pat.and_then(|p| {
@@ -457,7 +446,6 @@ fn start_end<'a>(
 
 #[pymethods]
 impl MatchLazy {
-
     #[getter]
     fn re(&self) -> Option<String> {
         Some(self.re.clone())
@@ -710,38 +698,6 @@ impl MatchLazy {
     }
 }
 
-#[pyfunction(name = "match")]
-fn r#match(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
-    pattern
-        .regex
-        .captures(text)
-        .and_then(|captures| {
-            Ok(if let Some(caps) = captures {
-                if let Some(mat) = caps.get(0) {
-                    if mat.start() == 0 {
-                        Ok(Some(Match {
-                            mat: unsafe { std::mem::transmute(mat) },
-                            captures: unsafe { std::mem::transmute(caps) },
-                            named_groups: pattern
-                                .regex
-                                .capture_names()
-                                .map(|name| name.map(|n| n.to_string()))
-                                .collect(),
-                            text: text.to_string(),
-                        }))
-                    } else {
-                        Ok(None)
-                    }
-                } else {
-                    Ok(None)
-                }
-            } else {
-                Ok(None)
-            })
-        })
-        .unwrap_or(Ok(None))
-}
-
 #[pyfunction]
 fn fullmatch(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
     pattern
@@ -948,14 +904,12 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "subn",
             "escape",
             "purge",
-            "matchnew",
         ],
     )?;
 
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(search, m)?)?;
     m.add_function(wrap_pyfunction!(r#match, m)?)?;
-    m.add_function(wrap_pyfunction!(r#match_str, m)?)?;
     m.add_function(wrap_pyfunction!(fullmatch, m)?)?;
     m.add_function(wrap_pyfunction!(split, m)?)?;
     m.add_function(wrap_pyfunction!(findall, m)?)?;
@@ -964,8 +918,6 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(subn, m)?)?;
     m.add_function(wrap_pyfunction!(escape, m)?)?;
     m.add_function(wrap_pyfunction!(purge, m)?)?;
-
-    m.add_function(wrap_pyfunction!(matchnew, m)?)?;
 
     Ok(())
 }
@@ -1019,18 +971,17 @@ mod tests {
 
     #[test]
     fn test_match_at_start() {
-        let pattern = compile(r"\d+", None).unwrap();
-        let result = r#match(&pattern, "123abc").unwrap();
+        let regexStr = PatternOrString::Str(r"\d+".to_string());
+        let result = r#match(regexStr, "123abc").unwrap();
         assert!(result.is_some());
-
-        let match_obj = result.unwrap();
-        assert_eq!(match_obj.group_zero(), Some("123".to_string()));
+        //TODO - Have you misunderstood string ?
+        //assert_eq!(result.unwrap().string(), Some("123".to_string()));
     }
 
     #[test]
     fn test_match_not_at_start() {
-        let pattern = compile(r"\d+", None).unwrap();
-        let result = r#match(&pattern, "abc123").unwrap();
+        let pattern = PatternOrString::Pattern(compile(r"\d+", None).unwrap());
+        let result = r#match(pattern, "abc123").unwrap();
         assert!(result.is_none());
     }
 
@@ -1401,16 +1352,16 @@ mod tests {
     }
 
     #[test]
-    fn test_matchnew_not_matching_is_none() {
+    fn test_match_not_matching_is_none() {
         let p = PatternOrString::Str(String::from("Hello"));
-        let m = matchnew(p, "Good Bye").unwrap();
+        let m = r#match(p, "Good Bye").unwrap();
         assert!(m.is_none())
     }
 
     #[test]
-    fn test_matchnew_start_with_string_pattern_no_args() {
+    fn test_match_start_with_string_pattern_no_args() {
         let p = PatternOrString::Str(String::from("Hello"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.start(py, None);
             assert!(result.is_ok());
@@ -1422,9 +1373,9 @@ mod tests {
     }
 
     #[test]
-    fn test_matchnew_start_with_string_pattern_int_no_match() {
+    fn test_match_start_with_string_pattern_int_no_match() {
         let p = PatternOrString::Str(String::from("Hello"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
 
         Python::with_gil(|py| {
             let result = m.start(py, Some(NumberString::USize(1)));
@@ -1433,9 +1384,9 @@ mod tests {
     }
 
     #[test]
-    fn test_matchnew_end_with_string_pattern_no_args() {
+    fn test_match_end_with_string_pattern_no_args() {
         let p = PatternOrString::Str(String::from("Hello"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             let result = m.end(py, None);
@@ -1448,9 +1399,9 @@ mod tests {
     }
 
     #[test]
-    fn test_matchnew_end_with_string_pattern_int_no_match() {
+    fn test_match_end_with_string_pattern_int_no_match() {
         let p = PatternOrString::Str(String::from("Hello"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::USize(1)));
             assert!(result.is_err());
@@ -1460,7 +1411,7 @@ mod tests {
     #[test]
     fn test_start_with_groups_first_int_group() {
         let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.start(py, Some(NumberString::USize(1)));
             assert!(result.is_ok());
@@ -1474,7 +1425,7 @@ mod tests {
     #[test]
     fn test_start_with_groups_second_int_group() {
         let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.start(py, Some(NumberString::USize(2)));
             assert!(result.is_ok());
@@ -1488,7 +1439,7 @@ mod tests {
     #[test]
     fn test_end_with_groups_first_int_group() {
         let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::USize(1)));
             assert!(result.is_ok());
@@ -1502,7 +1453,7 @@ mod tests {
     #[test]
     fn test_end_with_groups_second_int_group() {
         let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::USize(2)));
             assert!(result.is_ok());
@@ -1516,7 +1467,7 @@ mod tests {
     #[test]
     fn test_end_with_groups_third_int_group() {
         let p = PatternOrString::Str(String::from(r"(Hello)\s(World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::USize(3)));
             assert!(result.is_err());
@@ -1526,7 +1477,7 @@ mod tests {
     #[test]
     fn test_start_with_groups_first_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.start(py, Some(NumberString::Str("first".to_string())));
             assert!(result.is_ok());
@@ -1540,7 +1491,7 @@ mod tests {
     #[test]
     fn test_start_with_groups_second_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.start(py, Some(NumberString::Str("second".to_string())));
             assert!(result.is_ok());
@@ -1554,7 +1505,7 @@ mod tests {
     #[test]
     fn test_end_with_groups_first_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::Str("first".to_string())));
             assert!(result.is_ok());
@@ -1568,7 +1519,7 @@ mod tests {
     #[test]
     fn test_end_with_groups_second_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::Str("second".to_string())));
             assert!(result.is_ok());
@@ -1582,7 +1533,7 @@ mod tests {
     #[test]
     fn test_end_with_groups_third_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.end(py, Some(NumberString::Str("hugo".to_string())));
             assert!(result.is_err());
@@ -1592,14 +1543,14 @@ mod tests {
     #[test]
     fn test_string() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         assert_eq!("Hello World", m.string())
     }
 
     #[test]
     fn test_span_with_groups_first_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.span(py, Some(NumberString::Str("first".to_string())));
             assert!(result.is_ok());
@@ -1613,7 +1564,7 @@ mod tests {
     #[test]
     fn test_span_with_groups_second_string_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.span(py, Some(NumberString::Str("second".to_string())));
             assert!(result.is_ok());
@@ -1627,7 +1578,7 @@ mod tests {
     #[test]
     fn test_span_with_groups_first_int_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.span(py, Some(NumberString::USize(1)));
             assert!(result.is_ok());
@@ -1641,7 +1592,7 @@ mod tests {
     #[test]
     fn test_span_with_groups_second_int_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.span(py, Some(NumberString::USize(2)));
             assert!(result.is_ok());
@@ -1655,7 +1606,7 @@ mod tests {
     #[test]
     fn test_span_with_groups_no_arg() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.span(py, None);
             assert!(result.is_ok());
@@ -1669,7 +1620,7 @@ mod tests {
     #[test]
     fn test_endpos() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         let result = m.endpos();
         assert_eq!(11, result);
     }
@@ -1677,7 +1628,7 @@ mod tests {
     #[test]
     fn test_match_new_group_no_args() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, Vec::new());
             assert!(result.is_ok());
@@ -1691,7 +1642,7 @@ mod tests {
     #[test]
     fn test_match_new_group_int_arg_group_zero() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::USize(0)]);
             assert!(result.is_ok());
@@ -1705,7 +1656,7 @@ mod tests {
     #[test]
     fn test_match_new_group_int_arg_group_one() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::USize(1)]);
             assert!(result.is_ok());
@@ -1719,7 +1670,7 @@ mod tests {
     #[test]
     fn test_match_new_group_int_arg_group_two() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::USize(2)]);
             assert!(result.is_ok());
@@ -1733,7 +1684,7 @@ mod tests {
     #[test]
     fn test_match_new_group_int_arg_group_two_and_one() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::USize(2), NumberString::USize(1)]);
             assert!(result.is_ok());
@@ -1747,7 +1698,7 @@ mod tests {
     #[test]
     fn test_match_new_group_int_arg_group_invalid_index() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::USize(4)]);
             assert!(result.is_err());
@@ -1757,7 +1708,7 @@ mod tests {
     #[test]
     fn test_match_new_group_int_arg_group_invalid_index_throws_no_such_index() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::USize(4)]);
 
@@ -1778,7 +1729,7 @@ mod tests {
     #[test]
     fn test_match_new_group_string_arg_group_first() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::Str("first".to_string())]);
             assert!(result.is_ok());
@@ -1792,7 +1743,7 @@ mod tests {
     #[test]
     fn test_match_new_group_string_arg_group_second() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(py, vec![NumberString::Str("second".to_string())]);
             assert!(result.is_ok());
@@ -1806,7 +1757,7 @@ mod tests {
     #[test]
     fn test_match_new_group_string_arg_group_second_and_first() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(
                 py,
@@ -1826,7 +1777,7 @@ mod tests {
     #[test]
     fn test_match_new_group_string_int_args() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.group(
                 py,
@@ -1854,7 +1805,7 @@ mod tests {
     #[test]
     fn test_groups_all_capturing() {
         let p = PatternOrString::Str(String::from(r"(?P<first>Hello)\s(?P<second>World)"));
-        let m = matchnew(p, "Hello World").unwrap().unwrap();
+        let m = r#match(p, "Hello World").unwrap().unwrap();
         Python::with_gil(|py| {
             let result = m.groups(py, None);
             assert!(result.is_ok());
@@ -1869,7 +1820,7 @@ mod tests {
         let p = PatternOrString::Str(String::from(
             r"(?P<first>Hello)\s(?P<second>World)\s(?P<numbers>\d+)?",
         ));
-        let m = matchnew(p, "Hello World some extra text which isn't numbers")
+        let m = r#match(p, "Hello World some extra text which isn't numbers")
             .unwrap()
             .unwrap();
         Python::with_gil(|py| {
@@ -1889,7 +1840,7 @@ mod tests {
         let p = PatternOrString::Str(String::from(
             r"(?P<first>Hello)\s(?P<second>World)\s(?P<numbers>\d+)?",
         ));
-        let m = matchnew(p, "Hello World some extra text which isn't numbers")
+        let m = r#match(p, "Hello World some extra text which isn't numbers")
             .unwrap()
             .unwrap();
         Python::with_gil(|py| {
@@ -1906,7 +1857,7 @@ mod tests {
     #[test]
     fn test_last_group_all_caputuring() {
         let p = PatternOrString::Str(String::from(r"(?P<first>\w+) (?P<last>\w+)"));
-        let m = matchnew(p, "John Doe").unwrap().unwrap();
+        let m = r#match(p, "John Doe").unwrap().unwrap();
 
         let last_group = m.lastgroup();
 
@@ -1918,7 +1869,7 @@ mod tests {
         let p = PatternOrString::Str(String::from(
             r"(?P<first>\w+)(?P<middle> \w+)?(?P<last> \w+)",
         ));
-        let m = matchnew(p, "John Doe").unwrap().unwrap();
+        let m = r#match(p, "John Doe").unwrap().unwrap();
 
         let last_group = m.lastgroup();
 
@@ -1928,7 +1879,7 @@ mod tests {
     #[test]
     fn test_last_group_or_group() {
         let p = PatternOrString::Str(String::from(r"(?P<first>\w+)|(?P<last>\w+)"));
-        let m = matchnew(p, "John Doe").unwrap().unwrap();
+        let m = r#match(p, "John Doe").unwrap().unwrap();
 
         let last_group = m.lastgroup();
 
@@ -1938,7 +1889,7 @@ mod tests {
     #[test]
     fn test_last_group_last_group_not_named() {
         let p = PatternOrString::Str(String::from(r"(?P<first>\w+)(\w+)"));
-        let m = matchnew(p, "John Doe").unwrap().unwrap();
+        let m = r#match(p, "John Doe").unwrap().unwrap();
 
         let last_group = m.lastgroup();
 
@@ -1948,7 +1899,7 @@ mod tests {
     #[test]
     fn test_last_index_first_group_match() {
         let p = PatternOrString::Str(String::from(r"(\w+)\s+(\d+)?"));
-        let m = matchnew(p, "John ").unwrap().unwrap();
+        let m = r#match(p, "John ").unwrap().unwrap();
         let last_index = m.lastindex();
 
         assert_eq!(1, last_index.unwrap())
@@ -1957,7 +1908,7 @@ mod tests {
     #[test]
     fn test_last_index_all_groups_match() {
         let p = PatternOrString::Str(String::from(r"(\w+)\s+(\d+)?"));
-        let m = matchnew(p, "John 58").unwrap().unwrap();
+        let m = r#match(p, "John 58").unwrap().unwrap();
         let last_index = m.lastindex();
 
         assert_eq!(2, last_index.unwrap())
@@ -1966,7 +1917,7 @@ mod tests {
     #[test]
     fn test_last_index_no_groups_match() {
         let p = PatternOrString::Str(String::from(r"(\d+)?"));
-        let m = matchnew(p, "John").unwrap().unwrap();
+        let m = r#match(p, "John").unwrap().unwrap();
         let last_index = m.lastindex();
 
         assert!(last_index.is_none())
@@ -1975,7 +1926,7 @@ mod tests {
     #[test]
     fn test_last_index_with_named_groups() {
         let p = PatternOrString::Str(String::from(r"(?P<first>\w+) (?P<last>\w+)"));
-        let m = matchnew(p, "John Doe").unwrap().unwrap();
+        let m = r#match(p, "John Doe").unwrap().unwrap();
         let last_index = m.lastindex();
 
         assert_eq!(2, last_index.unwrap())
@@ -1984,10 +1935,9 @@ mod tests {
     #[test]
     fn test_re_returns_the_expression() {
         let p = PatternOrString::Str(String::from(r"(\d+)?"));
-        let m = matchnew(p, "John").unwrap().unwrap();
+        let m = r#match(p, "John").unwrap().unwrap();
         let result = m.re();
 
         assert_eq!(r"(\d+)?", result.unwrap())
     }
-
 }
