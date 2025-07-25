@@ -56,8 +56,6 @@ struct Match {
     text: String,
 }
 
-
-
 #[pyclass]
 #[derive(Debug, Clone)]
 struct MatchLazy {
@@ -310,21 +308,6 @@ fn search(pattern: &Pattern, text: &str) -> PyResult<Option<Match>> {
     }
 }
 
-#[pyfunction(name = "match")]
-fn r#match_str(pattern: String, text: &str) -> PyResult<Option<MatchLazy>> {
-    let regex = Regex::new(&pattern);
-    match regex {
-        Ok(r) => {
-            let mut p = Pattern { regex: r, flags: 0 };
-            p.r#match(text)
-        }
-        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "{}",
-            e
-        ))),
-    }
-}
-
 fn create_pattern(pattern: PatternOrString) -> Result<Pattern, fancy_regex::Error> {
     match pattern {
         PatternOrString::Str(s) => match Regex::new(&s) {
@@ -345,40 +328,41 @@ pub(crate) fn r#match(pattern: PatternOrString, text: &str) -> PyResult<Option<M
             .and_then(|captures| {
                 Ok(if let Some(caps) = captures {
                     if let Some(mat) = caps.get(0) {
-                        Ok(Some(MatchLazy {
-                            re: p.regex.as_str().to_string(),
-                            string: text.to_string(),
-                            // Initialize OnceLock fields as empty
-                            full_match: OnceLock::new(),
-                            captures: OnceLock::new(),
-                            named_groups: p
-                                .regex
-                                .capture_names()
-                                .enumerate()
-                                .filter_map(|(index, name)| match name {
-                                    Some(n) => Some((n.to_string(), index)),
-                                    None => None,
-                                })
-                                .collect(),
-                            named_group_indexes: p
-                                .regex
-                                .capture_names()
-                                .enumerate()
-                                .filter_map(|(index, name)| match name {
-                                    Some(n) => Some((index, n.to_string())),
-                                    None => None,
-                                })
-                                .collect(),
-                            //.collect(),
-
-                            // Store positions for lazy computation
-                            match_start: mat.start(),
-                            match_end: mat.end(),
-                            capture_positions: caps
-                                .iter()
-                                .map(|c| c.map(|m| (m.start(), m.end())))
-                                .collect(),
-                        }))
+                        if mat.start() != 0 {
+                            Ok(None)
+                        } else {
+                            Ok(Some(MatchLazy {
+                                re: p.regex.as_str().to_string(),
+                                string: text.to_string(),
+                                // Initialize OnceLock fields as empty
+                                full_match: OnceLock::new(),
+                                captures: OnceLock::new(),
+                                named_groups: p
+                                    .regex
+                                    .capture_names()
+                                    .enumerate()
+                                    .filter_map(|(index, name)| match name {
+                                        Some(n) => Some((n.to_string(), index)),
+                                        None => None,
+                                    })
+                                    .collect(),
+                                named_group_indexes: p
+                                    .regex
+                                    .capture_names()
+                                    .enumerate()
+                                    .filter_map(|(index, name)| match name {
+                                        Some(n) => Some((index, n.to_string())),
+                                        None => None,
+                                    })
+                                    .collect(),
+                                match_start: mat.start(),
+                                match_end: mat.end(),
+                                capture_positions: caps
+                                    .iter()
+                                    .map(|c| c.map(|m| (m.start(), m.end())))
+                                    .collect(),
+                            }))
+                        }
                     } else {
                         Ok(None)
                     }
@@ -971,11 +955,9 @@ mod tests {
 
     #[test]
     fn test_match_at_start() {
-        let regexStr = PatternOrString::Str(r"\d+".to_string());
-        let result = r#match(regexStr, "123abc").unwrap();
+        let regex_str = PatternOrString::Str(r"\d+".to_string());
+        let result = r#match(regex_str, "123abc").unwrap();
         assert!(result.is_some());
-        //TODO - Have you misunderstood string ?
-        //assert_eq!(result.unwrap().string(), Some("123".to_string()));
     }
 
     #[test]
