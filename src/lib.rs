@@ -2,15 +2,13 @@ use fancy_regex::Expander;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use pyo3::pyfunction;
 use pyo3::types::PyDict;
 use pyo3::types::PyTuple;
 use pyo3::wrap_pyfunction;
 use pyo3::FromPyObject;
-use pyo3::{prelude::*, IntoPyObjectExt};
-use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::result;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
@@ -46,17 +44,9 @@ struct Pattern {
 }
 
 #[pyclass]
-#[derive(Debug)]
-struct Match {
-    #[allow(dead_code)]
-    mat: fancy_regex::Match<'static>,
-    captures: Captures<'static>,
-}
-
-#[pyclass]
 #[derive(Debug, Clone)]
 struct MatchLazy {
-    re: String,
+    pattern: Pattern,
     string: String,
     named_groups: HashMap<String, usize>,
     named_group_indexes: HashMap<usize, String>,
@@ -87,6 +77,7 @@ fn get_regex_cache() -> &'static Mutex<HashMap<(String, u32), Regex>> {
     REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/*
 #[pymethods]
 impl Match {
     fn expand(&self, template: &str) -> String {
@@ -94,6 +85,7 @@ impl Match {
         expander.expansion(template, &self.captures)
     }
 }
+*/
 
 #[pyfunction]
 #[pyo3(signature = (pattern, flags=None))]
@@ -175,6 +167,13 @@ impl Pattern {
     fn groups(&self) -> usize {
         self.regex.captures_len() - 1
     }
+
+    //TODO
+    /*
+    fn expand(&self, template : &str) -> PyResult<String> {
+        sub(self, repl, text)
+    }
+    */
 }
 
 #[pyfunction]
@@ -210,7 +209,7 @@ pub(crate) fn match_internal(
                             Ok(None)
                         } else {
                             let m = MatchLazy {
-                                re: p.regex.as_str().to_string(),
+                                pattern: p.clone(),
                                 string: text.to_string(),
                                 named_groups: p
                                     .regex
@@ -238,23 +237,17 @@ pub(crate) fn match_internal(
                                     .collect(),
                             };
                             //fullmatch - matching
-                            if (match_start
-                                && mat.start() == 0)
-                                && (match_end
-                                && mat.end() == m.string.len())
+                            if (match_start && mat.start() == 0)
+                                && (match_end && mat.end() == m.string.len())
                             {
                                 Ok(Some(m))
-                            }                             
+                            }
                             //fullmatch - not matching
-                            else if (match_start
-                                && mat.start() == 0)
-                                && (match_end
-                                && mat.end() != m.string.len())
+                            else if (match_start && mat.start() == 0)
+                                && (match_end && mat.end() != m.string.len())
                             {
                                 Ok(None)
-                            }
-                            
-                            else if match_start && mat.start() == 0 && !match_end {
+                            } else if match_start && mat.start() == 0 && !match_end {
                                 Ok(Some(m))
                             } else {
                                 Ok(Some(m))
@@ -296,7 +289,6 @@ fn start_end<'a>(
     match_accessor: impl Fn(&MatchLazy) -> usize,
     capture_position_accessor: impl Fn((usize, usize)) -> usize,
 ) -> PyResult<Bound<'a, PyAny>> {
-
     match element {
         Some(args) => match args {
             NumberString::USize(i) => {
@@ -336,9 +328,24 @@ fn start_end<'a>(
 
 #[pymethods]
 impl MatchLazy {
+    /*
+        #[pyfunction]
+        fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
+        let expander = Expander::python();
+        Ok(pattern
+            .regex
+            .replace_all(text, |caps: &Captures| expander.expansion(repl, caps))
+            .into_owned())
+    }*/
+
+    fn expand(&self, template: &str) -> () {
+        //if we have a match lazy object we have the string ?
+        //self.
+    }
+
     #[getter]
     fn re(&self) -> Option<String> {
-        Some(self.re.clone())
+        Some(self.pattern.regex.as_str().to_string())
     }
 
     fn matchlazy_group_int<'a>(
@@ -605,73 +612,6 @@ fn findall(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
     Ok(matches)
 }
 
-/*
-#[pyfunction]
-fn finditer(pattern: &Pattern, text: &str) -> PyResult<Vec<Match>> {
-    let mut matches: Vec<Match> = Vec::new();
-    for result in pattern.regex.captures_iter(text) {
-        let caps = result.map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e))
-        })?;
-        // For each match, push a Match struct for every group from 1 to caps.len()
-        for idx in 1..caps.len() {
-            if let Some(mat) = caps.get(idx) {
-                let static_mat: fancy_regex::Match<'static> = unsafe { std::mem::transmute(mat) };
-                let static_caps: Captures<'static> = unsafe { std::mem::transmute(&caps) };
-                matches.push(Match {
-                    mat: static_mat,
-                    captures: static_caps,
-                    text: text.to_string(),
-                });
-            }
-        }
-    }
-    Ok(matches)
-}
-*/
-
-/*
-#[pyfunction]
-fn sub(pattern: &Pattern, repl: Replacement, text: &str) -> PyResult<String> {
-    Python::with_gil(|py| {
-        match &repl {
-            Replacement::String(s) => {
-                // Handle string replacement with expansion
-                let expander = Expander::python();
-                Ok(pattern.regex.replace_all(text, |caps: &Captures| {
-                    expander.expansion(s.as_str(), caps)
-                }).into_owned())
-            },
-            Replacement::Callable(callable) => {
-                // Handle callable replacement manually
-                let mut result = String::new();
-                let mut last_match = 0;
-
-                for caps in pattern.regex.captures_iter(text) {
-                    let caps = caps.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Regex error: {}", e)))?;
-                    let m = caps.get(0).unwrap();
-
-                    // Add text before match
-                    result.push_str(&text[last_match..m.start()]);
-
-                    // Get replacement from callable
-                    let match_str = m.as_str();
-                    let py_result = callable.call1(py, (match_str,))?;
-                    let replacement = py_result.extract::<String>(py)?;
-                    result.push_str(&replacement);
-
-                    last_match = m.end();
-                }
-
-                // Add remaining text
-                result.push_str(&text[last_match..]);
-                Ok(result)
-            }
-        }
-    })
-}
-*/
-
 #[pyfunction]
 fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
     let expander = Expander::python();
@@ -684,7 +624,6 @@ fn sub(pattern: &Pattern, repl: &str, text: &str) -> PyResult<String> {
 #[pyfunction]
 #[pyo3(signature = (pattern, repl, text, count=0))]
 fn subn(pattern: &Pattern, repl: &str, text: &str, count: usize) -> PyResult<(String, usize)> {
-
     let expander = Expander::python();
     let mut replacement_groups = usize::default();
     let result: Result<std::borrow::Cow<'_, str>, fancy_regex::Error> =
@@ -724,7 +663,6 @@ fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
 fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyo3_log::init();
     m.add_class::<Pattern>()?;
-    m.add_class::<Match>()?;
     m.add_class::<Scanner>()?;
     m.add_class::<RegexFlags>()?;
     m.add_class::<Constants>()?;
@@ -820,20 +758,16 @@ mod tests {
     fn test_fullmatch_partial() {
         let pattern = compile(r"\d+", None).unwrap();
 
-   
         let result = fullmatch(PatternOrString::Pattern(pattern), "123abc").unwrap();
         assert!(result.is_none());
-        
     }
 
     #[test]
     fn test_fullmatch_full() {
         let pattern = compile(r"\d+abc", None).unwrap();
 
-   
         let result = fullmatch(PatternOrString::Pattern(pattern), "123abc").unwrap();
         assert!(result.is_some());
-        
     }
 
     #[test]
@@ -991,7 +925,7 @@ mod tests {
 
         Python::with_gil(|py| {
             let pattern = compile(r"(?P<year>\d{4})-(?P<month>\d{2})", None).unwrap();
-            let result = search(PatternOrString::Pattern(pattern) ,"Date: 2023-12-25").unwrap();
+            let result = search(PatternOrString::Pattern(pattern), "Date: 2023-12-25").unwrap();
             assert!(result.is_some());
 
             let match_obj = result.unwrap();
@@ -1086,8 +1020,9 @@ mod tests {
         assert!(result.is_some());
 
         let match_obj = result.unwrap();
+
         //TODO
-        /* 
+        /*
         let expanded = match_obj.expand(r"\2 \1");
         assert_eq!(expanded, "world hello");
         */
@@ -1127,7 +1062,11 @@ mod tests {
 
         Python::with_gil(|py| {
             let pattern = compile(r"(?P<protocol>https?)://(?P<domain>[\w.-]+)", None).unwrap();
-            let result = search(PatternOrString::Pattern(pattern), "Visit https://example.com for more").unwrap();
+            let result = search(
+                PatternOrString::Pattern(pattern),
+                "Visit https://example.com for more",
+            )
+            .unwrap();
             assert!(result.is_some());
 
             let match_obj = result.unwrap();
