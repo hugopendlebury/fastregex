@@ -1,7 +1,6 @@
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use fancy_regex::{Expander, Match};
-use pyo3::exceptions::PyIndexError;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyValueError, PyIndexError, PyRuntimeError, PyKeyError};
 use pyo3::prelude::*;
 use pyo3::pyfunction;
 use pyo3::types::PyDict;
@@ -11,6 +10,7 @@ use pyo3::FromPyObject;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use thiserror::Error;
 
 #[derive(FromPyObject, Clone, Debug)]
 enum NumberString {
@@ -40,7 +40,7 @@ struct Pattern {
 #[pyclass]
 #[derive(Debug, Clone)]
 struct MatchLazy {
-    pattern: Pattern,
+    pattern: Pattern,  // Reference instead of owned
     string: String,
     named_groups: HashMap<String, usize>,
     named_group_indexes: HashMap<usize, String>,
@@ -62,6 +62,34 @@ enum RegexFlags {
     DOTALL = 2,
 }
 
+
+
+#[derive(Error, Debug)]
+pub enum RegexError {
+    #[error("Regex compilation failed: {0}")]
+    CompileError(#[from] Box<fancy_regex::Error>),
+    
+    #[error("Pattern matching failed: {0}")]
+    MatchError(String),
+    
+    #[error("Invalid group index: {0}")]
+    InvalidGroup(usize),
+    
+    #[error("Invalid group name: {0}")]
+    InvalidGroupName(String),
+}
+
+impl From<RegexError> for PyErr {
+    fn from(err: RegexError) -> Self {
+        match err {
+            RegexError::CompileError(_) => PyValueError::new_err(format!("{:#?}", err)),
+            RegexError::MatchError(_) => PyRuntimeError::new_err(format!("{:#?}", err)),
+            RegexError::InvalidGroup(_) => PyIndexError::new_err(format!("{:#?}", err)),
+            RegexError::InvalidGroupName(_) => PyKeyError::new_err(format!("{:#?}", err)),
+        }
+    }
+}
+
 #[pyclass]
 struct Constants;
 
@@ -73,7 +101,8 @@ fn get_regex_cache() -> &'static Mutex<HashMap<(String, u32), Regex>> {
 
 #[pyfunction]
 #[pyo3(signature = (pattern, flags=None))]
-fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
+// Then your functions become much cleaner:
+fn compile(pattern: &str, flags: Option<u32>) -> Result<Pattern, RegexError> {
     let flags = flags.unwrap_or(0);
     let mut cache = get_regex_cache().lock().unwrap();
 
@@ -85,23 +114,12 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
     }
 
     let mut builder = RegexBuilder::new(pattern);
-
+    
     if flags & 0b0001 != 0 {
         builder.case_insensitive(true);
     }
-    /*
-    if flags & 0b0010 != 0 {
-        builder.multi_line(true);
-    }
-    if flags & 0b0100 != 0 {
-        builder.dot_matches_new_line(true);
-    }
-    */
-    // TODO Add other flags as needed
 
-    let regex = builder
-        .build()
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let regex = builder.build().map_err(Box::new)?; 
 
     cache.insert((pattern.to_string(), flags), regex.clone());
     Ok(Pattern { regex, flags })
@@ -109,6 +127,11 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
 
 #[pymethods]
 impl Pattern {
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("<Pattern '{}'>", self.regex.as_str()))
+    }
+
     pub fn findall(&self, text: &str) -> PyResult<Vec<String>> {
         findall(PatternOrString::Pattern(self.clone()), text)
     }
@@ -117,7 +140,7 @@ impl Pattern {
         finditer(PatternOrString::Pattern(self.clone()), text)
     }
 
-    pub fn fullmatch(&self, text: &str) -> PyResult<Option<MatchLazy>> {
+    pub fn fullmatch(&self, text: &str) -> Result<Option<MatchLazy>, RegexError> {
         match_internal(PatternOrString::Pattern(self.clone()), text, true, true)
     }
 
@@ -126,15 +149,15 @@ impl Pattern {
         Ok(self.flags)
     }
 
-    pub fn r#match(&self, text: &str) -> PyResult<Option<MatchLazy>> {
+    pub fn r#match(&self, text: &str) -> Result<Option<MatchLazy>, RegexError> {
         r#match(PatternOrString::Pattern(self.clone()), text)
     }
 
-    pub fn search(&self, text: &str) -> PyResult<Option<MatchLazy>> {
+    pub fn search(&self, text: &str) -> Result<Option<MatchLazy>, RegexError> {
         search(PatternOrString::Pattern(self.clone()), text)
     }
 
-    pub fn split(&self, text: &str) -> PyResult<Vec<String>> {
+    pub fn split(&self, text: &str) -> Result<Vec<String>, RegexError> {
         split(PatternOrString::Pattern(self.clone()), text)
     }
 
@@ -146,7 +169,8 @@ impl Pattern {
     fn subn(&self, repl: &str, text: &str, count: usize) -> PyResult<(String, usize)> {
         subn(PatternOrString::Pattern(self.clone()), repl, text, count)
     }
-
+    
+    #[getter]
     fn pattern(&self) -> String {
         self.regex.to_string()
     }
@@ -165,31 +189,31 @@ impl Pattern {
 }
 
 #[pyfunction]
-fn search(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
+fn search(pattern: PatternOrString, text: &str) -> Result<Option<MatchLazy>, RegexError> {
     match_internal(pattern, text, false, false)
 }
 
-fn create_pattern(pattern: &PatternOrString) -> Result<Pattern, Box<fancy_regex::Error>> {
+fn create_pattern(pattern: &PatternOrString) -> Result<Pattern, RegexError> {
     match pattern {
-        PatternOrString::Str(s) => match Regex::new(s) {
-            Ok(r) => Ok(Pattern { regex: r, flags: 0 }),
-            Err(e) => Err(Box::new(e)),
+        PatternOrString::Str(s) => {
+            let regex = Regex::new(s).map_err(Box::new)?; 
+            Ok(Pattern { regex, flags: 0 })
         },
         PatternOrString::Pattern(p) => Ok(p.clone()),
     }
 }
 
-pub(crate) fn create_match_object(p: Pattern, text: &str, mat: Match, caps: Captures) -> MatchLazy {
+pub(crate) fn create_match_object(pattern: &Pattern, text: &str, mat: Match, caps: Captures) -> MatchLazy {
     MatchLazy {
-        pattern: p.clone(),
+        pattern: pattern.clone(),
         string: text.to_string(),
-        named_groups: p
+        named_groups: pattern
             .regex
             .capture_names()
             .enumerate()
             .filter_map(|(index, name)| name.map(|n| (n.to_string(), index)))
             .collect(),
-        named_group_indexes: p
+        named_group_indexes: pattern
             .regex
             .capture_names()
             .enumerate()
@@ -213,7 +237,7 @@ fn finditer(pattern: PatternOrString, text: &str) -> PyResult<Vec<MatchLazy>> {
     if let Ok(p) = pat {
         for captures in p.regex.captures_iter(text).flatten() {
             if let Some(mat) = captures.get(0) {
-                matches.push(create_match_object(p.clone(), text, mat, captures));
+                matches.push(create_match_object(&p, text, mat, captures));
             }
         }
     }
@@ -229,7 +253,7 @@ fn matches(pattern: PatternOrString, text: &str) -> Vec<MatchLazy> {
     if let Ok(p) = pat {
         for captures in p.regex.captures_iter(text).flatten() {
             if let Some(mat) = captures.get(0) {
-                matches.push(create_match_object(p.clone(), text, mat, captures));
+                matches.push(create_match_object(&p, text, mat, captures));
             }
         }
     }
@@ -237,67 +261,50 @@ fn matches(pattern: PatternOrString, text: &str) -> Vec<MatchLazy> {
     matches
 }
 
-pub(crate) fn match_internal(
+fn should_match(mat: &Match, text: &str, match_start: bool, match_end: bool) -> bool {
+    let starts_at_beginning = mat.start() == 0;
+    let ends_at_end = mat.end() == text.len();
+    
+    match (match_start, match_end) {
+        (true, true) => starts_at_beginning && ends_at_end,   // fullmatch
+        (true, false) => starts_at_beginning,                  // match
+        (false, false) => true,                                // search
+        (false, true) => unreachable!("Invalid combination"),
+    }
+}
+
+fn match_internal(
     pattern: PatternOrString,
     text: &str,
     match_start: bool,
     match_end: bool,
-) -> PyResult<Option<MatchLazy>> {
-    let pat = create_pattern(&pattern);
-
-    let match_type = pat.map(|p| {
-        p.regex
-            .captures(text)
-            .and_then(|captures| {
-                Ok(if let Some(caps) = captures {
-                    if let Some(mat) = caps.get(0) {
-                        if match_start && !match_end && mat.start() != 0 {
-                            Ok::<Option<MatchLazy>, PyErr>(None)
-                        } else {
-                            let m = create_match_object(p, text, mat, caps);
-                            //fullmatch - matching
-                            if (match_start && mat.start() == 0)
-                                && (match_end && mat.end() == m.string.len())
-                            {
-                                Ok(Some(m))
-                            }
-                            //fullmatch - not matching
-                            else if (match_start && mat.start() == 0)
-                                && (match_end && mat.end() != m.string.len())
-                            {
-                                Ok(None)
-                            } else if match_start && mat.start() == 0 && !match_end {
-                                Ok(Some(m))
-                            } else {
-                                Ok(Some(m))
-                            }
-                        }
-                    } else {
-                        Ok(None)
-                    }
+) -> Result<Option<MatchLazy>, RegexError> {
+    let pattern = create_pattern(&pattern)?;
+    let captures = pattern.regex.captures(text).map_err(Box::new)?;
+    
+    match captures {
+        Some(caps) => {
+            if let Some(mat) = caps.get(0) {
+                if should_match(&mat, text, match_start, match_end) {
+                    Ok(Some(create_match_object(&pattern, text, mat, caps)))
                 } else {
                     Ok(None)
-                })
-            })
-            .unwrap_or(Ok(None))
-    });
-
-    match match_type {
-        Ok(r) => Ok(r?),
-        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "{}",
-            e
-        ))),
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        None => Ok(None),
     }
 }
 
 #[pyfunction]
-pub(crate) fn r#match(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
+pub(crate) fn r#match(pattern: PatternOrString, text: &str) -> Result<Option<MatchLazy>, RegexError> {
     match_internal(pattern, text, true, false)
 }
 
 #[pyfunction]
-pub(crate) fn fullmatch(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
+pub(crate) fn fullmatch(pattern: PatternOrString, text: &str) -> Result<Option<MatchLazy>, RegexError> {
     match_internal(pattern, text, true, true)
 }
 
@@ -315,16 +322,11 @@ fn start_end<'a>(
                     Ok(match_accessor(mat).into_pyobject(py)?.into_any())
                 } else {
                     //get the result from the vector
-                    let positions = mat.capture_positions.get(i);
-
-                    match positions {
-                        Some(pos) => match pos {
-                            Some(p) => {
-                                Ok(capture_position_accessor(*p).into_pyobject(py)?.into_any())
-                            }
-                            None => Err(PyIndexError::new_err(format!("no such group {:?}", i))),
-                        },
-                        None => Err(PyIndexError::new_err(format!("no such group {:?}", i))),
+                    match mat.capture_positions.get(i) {
+                        Some(Some(p)) => {
+                            Ok(capture_position_accessor(*p).into_pyobject(py)?.into_any())
+                        }
+                        Some(None) | None => Err(PyIndexError::new_err(format!("no such group {:?}", i))),
                     }
                 }
             }
@@ -477,7 +479,7 @@ impl MatchLazy {
                 let obj = self.matchlazy_group_int(py, *match_index);
                 let _ = match obj {
                     Ok(o) => d.set_item(name, o.into_any()),
-                    Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!(
                         "{}",
                         e
                     ))),
@@ -603,12 +605,12 @@ fn findall(pattern: PatternOrString, text: &str) -> PyResult<Vec<String>> {
     let pattern = create_pattern(&pattern);
 
     let matches = pattern
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))?
+        .map_err(|e| PyErr::new::<PyRuntimeError, _>(format!("{}", e)))?
         .regex
         .find_iter(text)
         .map(|mat| {
             let res = mat
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))?
+                .map_err(|e| PyErr::new::<PyRuntimeError, _>(format!("{}", e)))?
                 .as_str()
                 .to_string();
             Ok::<String, PyErr>(res)
@@ -642,7 +644,7 @@ fn sub(pattern_or_string: PatternOrString, repl: Replacement, text: &str) -> PyR
 
                         let matches = matches(pattern_or_string, text);
                         let mut last_end = 0; // Start at beginning of text
-                        let mut result = String::new();
+                        let mut result = String::with_capacity(text.len());
                         for m in matches.iter() {
                             // Add "I have " (chars 0-7)
                             result.push_str(&text[last_end..m.match_start]);
@@ -661,7 +663,7 @@ fn sub(pattern_or_string: PatternOrString, repl: Replacement, text: &str) -> PyR
                 }
             }
         }
-        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+        Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!(
             "{}",
             e
         ))),
@@ -706,23 +708,13 @@ fn purge() -> PyResult<()> {
 }
 
 #[pyfunction]
-fn split(pattern: PatternOrString, text: &str) -> PyResult<Vec<String>> {
+fn split(pattern: PatternOrString, text: &str) -> Result<Vec<String>, RegexError> {
     let pattern = create_pattern(&pattern);
 
-    match pattern {
-        Ok(pat) => {
-            let results: Result<Vec<_>, _> = pat.regex.split(text).collect::<Result<Vec<_>, _>>();
 
-            match results {
-                Ok(result) => {
-                    let parts = result.into_iter().map(String::from).collect();
-                    Ok(parts)
-                }
-                Err(err) => Err(PyValueError::new_err(err.to_string())),
-            }
-        }
-        Err(err) => Err(PyValueError::new_err(err.to_string())),
-    }
+    let results: Result<Vec<_>, _> = pattern?.regex.split(text).collect::<Result<Vec<_>, _>>();
+    Ok(results.map_err(Box::new)?.into_iter().map(String::from).collect())      
+    
 }
 
 #[pymodule]
