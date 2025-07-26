@@ -705,6 +705,7 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use pyo3::prelude::*;
 
@@ -882,13 +883,17 @@ mod tests {
         assert!(result.is_some());
 
         let match_obj = result.unwrap();
-        //TODO
-        /*
-        let groups = match_obj.groups();
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0], Some("123".to_string()));
-        assert_eq!(groups[1], Some("456".to_string()));
-        */
+        
+        Python::with_gil(|py| {
+
+            let groups = match_obj.groups(py, None).unwrap();
+            let tuple = groups.downcast::<pyo3::types::PyTuple>()
+                .unwrap();
+            assert_eq!(tuple.len(), 2);
+            assert_eq!(Some(tuple.get_item(0).unwrap().extract::<String>().unwrap()), Some("123".to_string()));
+            assert_eq!(Some(tuple.get_item(1).unwrap().extract::<String>().unwrap()), Some("456".to_string()));
+
+        })
     }
 
     #[test]
@@ -897,26 +902,45 @@ mod tests {
         let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
         assert!(result.is_some());
 
-        //TODO
-        /*
-        let match_obj = result.unwrap();
-        let span = match_obj.span(0);
-        assert_eq!(span, Some((3, 6))); // Characters 3-6 (123)
-        */
+        Python::with_gil(|py| {
+            let match_obj = result.unwrap();
+            let span = match_obj.span(py,Some(NumberString::USize(0)));
+            let value: (i32, i32) = span.unwrap().extract().unwrap();
+            assert_eq!(value,(3, 6)); // Characters 3-6 (123)
+        })
+        
     }
 
     #[test]
-    fn test_match_start_end() {
+    fn test_search_start() {
         let pattern = compile(r"\d+", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
         assert!(result.is_some());
-        //TODO
 
-        /*
         let match_obj = result.unwrap();
-        assert_eq!(match_obj.start(0), Some(3));
-        assert_eq!(match_obj.end(0), Some(6));
-        */
+
+        Python::with_gil(|py| {
+            let start = match_obj.start(py, Some(NumberString::USize(0))).unwrap();
+            let value: i32 = start.extract().unwrap();
+            assert_eq!(value, 3);
+        })
+        
+    }
+
+        #[test]
+    fn test_search_end() {
+        let pattern = compile(r"\d+", None).unwrap();
+        let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
+        assert!(result.is_some());
+
+        let match_obj = result.unwrap();
+
+        Python::with_gil(|py| {
+            let start = match_obj.end(py, Some(NumberString::USize(0))).unwrap();
+            let value: i32 = start.extract().unwrap();
+            assert_eq!(value, 6);
+        })
+        
     }
 
     #[test]
@@ -931,9 +955,7 @@ mod tests {
             let match_obj = result.unwrap();
 
             // Test groupdict functionality
-            //TODO
-
-            /*
+            
             let groupdict = match_obj.groupdict().unwrap();
             let dict = groupdict
                 .bind(py)
@@ -956,7 +978,7 @@ mod tests {
                     .unwrap(),
                 "12"
             );
-            */
+            
         });
     }
 
@@ -1009,8 +1031,6 @@ mod tests {
         let result = purge();
         assert!(result.is_ok());
 
-        // Cache should be empty now, but we can't directly test this
-        // We can only test that purge doesn't error
     }
 
     #[test]
@@ -1071,9 +1091,8 @@ mod tests {
 
             let match_obj = result.unwrap();
 
-            //TODO
 
-            /*
+            
             let groupdict = match_obj.groupdict().unwrap();
             let dict = groupdict
                 .bind(py)
@@ -1096,7 +1115,7 @@ mod tests {
                     .unwrap(),
                 "example.com"
             );
-            */
+            
         });
     }
 
