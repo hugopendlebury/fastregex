@@ -110,7 +110,11 @@ fn compile(pattern: &str, flags: Option<u32>) -> PyResult<Pattern> {
 #[pymethods]
 impl Pattern {
     pub fn findall(&self, text: &str) -> PyResult<Vec<String>> {
-        findall(self, text)
+        findall(PatternOrString::Pattern(self.clone()), text)
+    }
+
+    fn finditer(&self, text: &str) -> PyResult<Vec<MatchLazy>> {
+        finditer(PatternOrString::Pattern(self.clone()), text)
     }
 
     pub fn fullmatch(&self, text: &str) -> PyResult<Option<MatchLazy>> {
@@ -131,7 +135,7 @@ impl Pattern {
     }
 
     pub fn split(&self, text: &str) -> PyResult<Vec<String>> {
-        split(self, text)
+        split(PatternOrString::Pattern(self.clone()), text)
     }
 
     pub fn sub(&self, repl: Replacement, text: &str) -> PyResult<String> {
@@ -595,8 +599,11 @@ impl MatchLazy {
 }
 
 #[pyfunction]
-fn findall(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
+fn findall(pattern: PatternOrString, text: &str) -> PyResult<Vec<String>> {
+    let pattern = create_pattern(&pattern);
+
     let matches = pattern
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e)))?
         .regex
         .find_iter(text)
         .map(|mat| {
@@ -699,13 +706,20 @@ fn purge() -> PyResult<()> {
 }
 
 #[pyfunction]
-fn split(pattern: &Pattern, text: &str) -> PyResult<Vec<String>> {
-    let results: Result<Vec<_>, _> = pattern.regex.split(text).collect::<Result<Vec<_>, _>>();
+fn split(pattern: PatternOrString, text: &str) -> PyResult<Vec<String>> {
+    let pattern = create_pattern(&pattern);
 
-    match results {
-        Ok(result) => {
-            let parts = result.into_iter().map(String::from).collect();
-            Ok(parts)
+    match pattern {
+        Ok(pat) => {
+            let results: Result<Vec<_>, _> = pat.regex.split(text).collect::<Result<Vec<_>, _>>();
+
+            match results {
+                Ok(result) => {
+                    let parts = result.into_iter().map(String::from).collect();
+                    Ok(parts)
+                }
+                Err(err) => Err(PyValueError::new_err(err.to_string())),
+            }
         }
         Err(err) => Err(PyValueError::new_err(err.to_string())),
     }
@@ -825,14 +839,14 @@ mod tests {
     #[test]
     fn test_findall_multiple_matches() {
         let pattern = compile(r"\d+", None).unwrap();
-        let result = findall(&pattern, "abc123def456ghi").unwrap();
+        let result = findall(PatternOrString::Pattern(pattern), "abc123def456ghi").unwrap();
         assert_eq!(result, vec!["123", "456"]);
     }
 
     #[test]
     fn test_findall_no_matches() {
         let pattern = compile(r"\d+", None).unwrap();
-        let result = findall(&pattern, "abcdef").unwrap();
+        let result = findall(PatternOrString::Pattern(pattern), "abcdef").unwrap();
         assert_eq!(result, Vec::<String>::new());
     }
 
@@ -947,14 +961,14 @@ mod tests {
     #[test]
     fn test_split_basic() {
         let pattern = compile(r"\s+", None).unwrap();
-        let result = split(&pattern, "hello world test").unwrap();
+        let result = split(PatternOrString::Pattern(pattern), "hello world test").unwrap();
         assert_eq!(result, vec!["hello", "world", "test"]);
     }
 
     #[test]
     fn test_split_no_matches() {
         let pattern = compile(r"\d+", None).unwrap();
-        let result = split(&pattern, "abcdef").unwrap();
+        let result = split(PatternOrString::Pattern(pattern), "abcdef").unwrap();
         assert_eq!(result, vec!["abcdef"]);
     }
 

@@ -57,6 +57,44 @@ fastregex mirrors the `re` module's API.
 
 We welcome contributions! Whether it's bug reports, feature requests, or code contributions, please feel free to reach out. Check our [contribution guidelines](CONTRIBUTING.md) to get started.
 
+## Examples
+
+### Using sub with a callable
+
+```
+import fastregex as re
+
+def double_number(match_obj):
+    """Double any number found"""
+    number = int(match_obj.group())
+    return str(number * 2)
+
+text = "I have 2 dogs and 3 cats"
+pattern = r'\d+'  # Match digits
+
+p = re.compile(pattern)
+
+result = re.sub(p, double_number, text)
+print(result)  # "I have 4 dogs and 6 cats"
+
+```
+
+### Using sub with a string replacement 
+```
+import fastregex as re
+
+replacement = re.sub(r"(\w+) (\w+)", r"\g<second>, \g<first> \g<second>.", "James Bond")
+print(replacement) # Bond, James Bond.
+```
+
+### Using sub with named capture groups 
+```
+import fastregex as re
+
+replacement = re.sub(r"(?P<first_name>\w+) (?P<last_name>\w+)", r"\g<last_name>, \g<first_name> \g<last_name>.", "James Bond")
+print(replacement) # 'Bond, James Bond.'
+```
+
 ## 📄 License
 
 fastregex is open-source software licensed under the MIT license.
