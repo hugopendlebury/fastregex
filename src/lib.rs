@@ -165,11 +165,11 @@ fn search(pattern: PatternOrString, text: &str) -> PyResult<Option<MatchLazy>> {
     match_internal(pattern, text, false, false)
 }
 
-fn create_pattern(pattern: &PatternOrString) -> Result<Pattern, fancy_regex::Error> {
+fn create_pattern(pattern: &PatternOrString) -> Result<Pattern, Box<fancy_regex::Error>> {
     match pattern {
-        PatternOrString::Str(s) => match Regex::new(&s) {
+        PatternOrString::Str(s) => match Regex::new(s) {
             Ok(r) => Ok(Pattern { regex: r, flags: 0 }),
-            Err(e) => Err(e),
+            Err(e) => Err(Box::new(e)),
         },
         PatternOrString::Pattern(p) => Ok(p.clone()),
     }
@@ -183,19 +183,13 @@ pub(crate) fn create_match_object(p: Pattern, text: &str, mat: Match, caps: Capt
             .regex
             .capture_names()
             .enumerate()
-            .filter_map(|(index, name)| match name {
-                Some(n) => Some((n.to_string(), index)),
-                None => None,
-            })
+            .filter_map(|(index, name)| name.map(|n| (n.to_string(), index)))
             .collect(),
         named_group_indexes: p
             .regex
             .capture_names()
             .enumerate()
-            .filter_map(|(index, name)| match name {
-                Some(n) => Some((index, n.to_string())),
-                None => None,
-            })
+            .filter_map(|(index, name)| name.map(|n| (index, n.to_string())))
             .collect(),
         match_start: mat.start(),
         match_end: mat.end(),
@@ -212,20 +206,12 @@ fn finditer(pattern: PatternOrString, text: &str) -> PyResult<Vec<MatchLazy>> {
 
     let mut matches = Vec::<MatchLazy>::new();
 
-    match pat {
-        Ok(p) => {
-            for captures in p.regex.captures_iter(text) {
-                match captures {
-                    Ok(caps) => {
-                        if let Some(mat) = caps.get(0) {
-                            matches.push(create_match_object(p.clone(), text, mat, caps));
-                        }
-                    }
-                    Err(_) => {}
-                }
+    if let Ok(p) = pat {
+        for captures in p.regex.captures_iter(text).flatten() {
+            if let Some(mat) = captures.get(0) {
+                matches.push(create_match_object(p.clone(), text, mat, captures));
             }
         }
-        Err(_) => {}
     }
 
     Ok(matches)
@@ -236,20 +222,12 @@ fn matches(pattern: PatternOrString, text: &str) -> Vec<MatchLazy> {
 
     let mut matches = Vec::<MatchLazy>::new();
 
-    match pat {
-        Ok(p) => {
-            for captures in p.regex.captures_iter(text) {
-                match captures {
-                    Ok(caps) => {
-                        if let Some(mat) = caps.get(0) {
-                            matches.push(create_match_object(p.clone(), text, mat, caps));
-                        }
-                    }
-                    Err(_) => {}
-                }
+    if let Ok(p) = pat {
+        for captures in p.regex.captures_iter(text).flatten() {
+            if let Some(mat) = captures.get(0) {
+                matches.push(create_match_object(p.clone(), text, mat, captures));
             }
         }
-        Err(_) => {}
     }
 
     matches
@@ -263,14 +241,14 @@ pub(crate) fn match_internal(
 ) -> PyResult<Option<MatchLazy>> {
     let pat = create_pattern(&pattern);
 
-    let match_type = pat.and_then(|p| {
+    let match_type = pat.map(|p| {
         p.regex
             .captures(text)
             .and_then(|captures| {
                 Ok(if let Some(caps) = captures {
                     if let Some(mat) = caps.get(0) {
                         if match_start && !match_end && mat.start() != 0 {
-                            Ok(None)
+                            Ok::<Option<MatchLazy>, PyErr>(None)
                         } else {
                             let m = create_match_object(p, text, mat, caps);
                             //fullmatch - matching
@@ -301,7 +279,7 @@ pub(crate) fn match_internal(
     });
 
     match match_type {
-        Ok(r) => Ok(r),
+        Ok(r) => Ok(r?),
         Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "{}",
             e
@@ -334,6 +312,7 @@ fn start_end<'a>(
                 } else {
                     //get the result from the vector
                     let positions = mat.capture_positions.get(i);
+
                     match positions {
                         Some(pos) => match pos {
                             Some(p) => {
@@ -369,7 +348,7 @@ impl MatchLazy {
         sub(
             PatternOrString::Pattern(self.pattern.clone()),
             Replacement::String(template.to_string()),
-            &self.string.as_str(),
+            self.string.as_str(),
         )
     }
 
@@ -393,7 +372,7 @@ impl MatchLazy {
                 }
                 None => Ok(py.None().into_pyobject(py)?.into_any()),
             },
-            None => Err(PyIndexError::new_err(format!("no such group"))),
+            None => Err(PyIndexError::new_err("no such group")),
         }
     }
 
@@ -405,7 +384,7 @@ impl MatchLazy {
         let index = self.named_groups.get(&group_name);
         match index {
             Some(i) => self.matchlazy_group_int(py, *i),
-            None => Err(PyIndexError::new_err(format!("no such group"))),
+            None => Err(PyIndexError::new_err("no such group")),
         }
     }
 
@@ -419,7 +398,7 @@ impl MatchLazy {
                 let py_str = s.into_pyobject(py)?;
                 Ok(py_str.into_any())
             }
-            None => Err(PyIndexError::new_err(format!("no such group"))),
+            None => Err(PyIndexError::new_err("no such group")),
         }
     }
 
@@ -451,7 +430,7 @@ impl MatchLazy {
 
     #[pyo3(signature = (*args))]
     fn group<'a>(&self, py: Python<'a>, args: Vec<NumberString>) -> PyResult<Bound<'a, PyAny>> {
-        if args.len() == 0 {
+        if args.is_empty() {
             self.matchlazy_group_int(py, 0)
         } else if args.len() == 1 {
             let arg = args.first().unwrap().clone();
@@ -477,11 +456,9 @@ impl MatchLazy {
     fn regs<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
         let mut results: Vec<Bound<'a, PyAny>> = Vec::<Bound<'a, PyAny>>::new();
 
-        for cap in self.capture_positions.iter() {
-            if let Some(c) = cap {
-                let tuple = (c.0, c.1).into_pyobject(py)?.into_any();
-                results.push(tuple);
-            }
+        for cap in self.capture_positions.iter().flatten() {
+            let tuple = (cap.0, cap.1).into_pyobject(py)?.into_any();
+            results.push(tuple);
         }
 
         Ok(PyTuple::new(py, results)?.into_any())
@@ -588,7 +565,7 @@ impl MatchLazy {
             })
             .rev()
             .take(1)
-            .map(|f| f.1.map(|group_name| group_name))
+            .map(|f| f.1)
             .last()
             .flatten();
         x
