@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use thiserror::Error;
+use bitflags::{bitflags, bitflags_match};
 
 #[derive(FromPyObject, Clone, Debug)]
 enum NumberString {
@@ -34,13 +35,13 @@ enum PatternOrString {
 #[derive(Debug, Clone)]
 struct Pattern {
     regex: Regex,
-    flags: u32,
+    flags: RegexFlags,
 }
 
 #[pyclass]
 #[derive(Debug, Clone)]
 struct MatchLazy {
-    pattern: Pattern,  // Reference instead of owned
+    pattern: Pattern, 
     string: String,
     named_groups: HashMap<String, usize>,
     named_group_indexes: HashMap<usize, String>,
@@ -54,15 +55,69 @@ struct Scanner {
     // Implement as needed
 }
 
-#[pyclass(eq, eq_int)]
-#[derive(PartialEq)]
-enum RegexFlags {
-    NOFLAG = 0,
-    IGNORECASE = 1,
-    DOTALL = 2,
+
+#[pyclass]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegexFlags {
+    bits: u32,
 }
 
+#[pymethods]
+impl RegexFlags {
+    #[classattr]
+    const NONE: u32 = 0;
+    #[classattr] 
+    const TEMPLATE: u32 = 1 << 0;
+    #[classattr]
+    const IGNORECASE: u32 = 1 << 1;
+    #[classattr]
+    const LOCALE: u32 = 1 << 2;
+    #[classattr]
+    const MULTILINE: u32 = 1 << 3;
+    #[classattr]
+    const DOTALL: u32 = 1 << 4;
+    #[classattr]
+    const UNICODE: u32 = 1 << 5;
+    #[classattr]
+    const VERBOSE: u32 = 1 << 6;
+    #[classattr]
+    const DEBUG: u32 = 1 << 7;
+    #[classattr]
+    const ASCII: u32 = 1 << 8;
 
+    #[new]
+    fn new(bits: Option<u32>) -> Self {
+        Self { bits: bits.map_or(0, |f| f) }
+    }
+
+    fn __or__(&self, other: &Self) -> Self {
+        Self { bits: self.bits | other.bits }
+    }
+
+    fn __and__(&self, other: &Self) -> Self {
+        Self { bits: self.bits & other.bits }
+    }
+
+    fn __xor__(&self, other: &Self) -> Self {
+        Self { bits: self.bits ^ other.bits }
+    }
+
+    fn contains_flag(&self, other: &Self) -> bool {
+        (self.bits & other.bits) == other.bits
+    }
+
+    fn contains_value(&self, flag: u32) -> bool {
+        (self.bits & flag) != 0
+    }
+
+    fn __int__(&self) -> u32 {
+        self.bits
+    }
+
+    fn __repr__(&self) -> String {
+        format!("RegexFlags({})", self.bits)
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum RegexError {
@@ -90,8 +145,6 @@ impl From<RegexError> for PyErr {
     }
 }
 
-#[pyclass]
-struct Constants;
 
 static REGEX_CACHE: OnceLock<Mutex<HashMap<(String, u32), Regex>>> = OnceLock::new();
 
@@ -99,14 +152,32 @@ fn get_regex_cache() -> &'static Mutex<HashMap<(String, u32), Regex>> {
     REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+
+macro_rules! apply_flag {
+    ($flags:ident, $builder:ident, {
+        $($flag:ident => $method:ident),* $(,)?
+    }) => {
+        $(
+            if $flags.contains_value(RegexFlags::$flag) {
+                $builder.$method(true);
+            }
+        )*
+    };
+}
+
 #[pyfunction]
 #[pyo3(signature = (pattern, flags=None))]
-// Then your functions become much cleaner:
 fn compile(pattern: &str, flags: Option<u32>) -> Result<Pattern, RegexError> {
-    let flags = flags.unwrap_or(0);
+    compile_with_flags(pattern, Some(RegexFlags::new(flags)))
+}
+
+#[pyfunction]
+#[pyo3(signature = (pattern, flags=None))]
+fn compile_with_flags(pattern: &str, flags: Option<RegexFlags>) -> Result<Pattern, RegexError> {
+    let flags = flags.unwrap_or(RegexFlags::new(None));
     let mut cache = get_regex_cache().lock().unwrap();
 
-    if let Some(regex) = cache.get(&(pattern.to_string(), flags)) {
+    if let Some(regex) = cache.get(&(pattern.to_string(), flags.bits)) {
         return Ok(Pattern {
             regex: regex.clone(),
             flags,
@@ -114,14 +185,20 @@ fn compile(pattern: &str, flags: Option<u32>) -> Result<Pattern, RegexError> {
     }
 
     let mut builder = RegexBuilder::new(pattern);
-    
-    if flags & 0b0001 != 0 {
-        builder.case_insensitive(true);
-    }
+
+    apply_flag!(flags, builder, {
+        IGNORECASE => case_insensitive,
+        MULTILINE  => multi_line,
+        VERBOSE    => verbose_mode,  
+        UNICODE    => unicode_mode,      
+        DOTALL     => dot_matches_new_line,
+
+    });
+
 
     let regex = builder.build().map_err(Box::new)?; 
 
-    cache.insert((pattern.to_string(), flags), regex.clone());
+    cache.insert((pattern.to_string(), flags.bits), regex.clone());
     Ok(Pattern { regex, flags })
 }
 
@@ -146,7 +223,7 @@ impl Pattern {
 
     pub fn flags(&self) -> PyResult<u32> {
         //TODO - Check what flags returns in python
-        Ok(self.flags)
+        Ok(self.flags.bits)
     }
 
     pub fn r#match(&self, text: &str) -> Result<Option<MatchLazy>, RegexError> {
@@ -197,7 +274,8 @@ fn create_pattern(pattern: &PatternOrString) -> Result<Pattern, RegexError> {
     match pattern {
         PatternOrString::Str(s) => {
             let regex = Regex::new(s).map_err(Box::new)?; 
-            Ok(Pattern { regex, flags: 0 })
+            //TODO - FIX THIS
+            Ok(Pattern { regex, flags: RegexFlags::new(None) })
         },
         PatternOrString::Pattern(p) => Ok(p.clone()),
     }
@@ -277,7 +355,7 @@ fn match_internal(
     pattern: PatternOrString,
     text: &str,
     match_start: bool,
-    match_end: bool,
+    match_end: bool
 ) -> Result<Option<MatchLazy>, RegexError> {
     let pattern = create_pattern(&pattern)?;
     let captures = pattern.regex.captures(text).map_err(Box::new)?;
@@ -723,8 +801,8 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pattern>()?;
     m.add_class::<Scanner>()?;
     m.add_class::<RegexFlags>()?;
-    m.add_class::<Constants>()?;
     m.add_class::<MatchLazy>()?;
+    m.add_class::<RegexFlags>()?;
     //m.add("__version__", "0.2.9")?;
     m.add("__doc__", "")?;
     m.add("__name__", "fastregex")?;
@@ -733,6 +811,7 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "__all__",
         vec![
             "compile",
+            "compile_with_flags",
             "search",
             "match",
             "fullmatch",
@@ -743,10 +822,22 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "subn",
             "escape",
             "purge",
+            "RegexFlags",
+            "Pattern",
+            "IGNORECASE",
+            "MULTILINE",
+            "DOTALL",
+            "UNICODE",
+            "ASCII",
+            "VERBOSE",
+            "DEBUG",
+            "LOCALE",
+            "TEMPLATE",
+            "NONE"
         ],
     )?;
-
     m.add_function(wrap_pyfunction!(compile, m)?)?;
+    m.add_function(wrap_pyfunction!(compile_with_flags, m)?)?;
     m.add_function(wrap_pyfunction!(search, m)?)?;
     m.add_function(wrap_pyfunction!(r#match, m)?)?;
     m.add_function(wrap_pyfunction!(fullmatch, m)?)?;
@@ -757,6 +848,16 @@ fn fastregex(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(subn, m)?)?;
     m.add_function(wrap_pyfunction!(escape, m)?)?;
     m.add_function(wrap_pyfunction!(purge, m)?)?;
+    m.add("IGNORECASE", RegexFlags::IGNORECASE)?;
+    m.add("MULTILINE", RegexFlags::MULTILINE)?;
+    m.add("DOTALL", RegexFlags::DOTALL)?;
+    m.add("UNICODE", RegexFlags::UNICODE)?;
+    m.add("ASCII", RegexFlags::ASCII)?;
+    m.add("VERBOSE", RegexFlags::VERBOSE)?;
+    m.add("DEBUG", RegexFlags::DEBUG)?;
+    m.add("LOCALE", RegexFlags::LOCALE)?;
+    m.add("TEMPLATE", RegexFlags::TEMPLATE)?;
+    m.add("NONE", RegexFlags::NONE)?;
 
     Ok(())
 }
@@ -774,26 +875,27 @@ mod tests {
 
     #[test]
     fn test_compile_basic() {
-        let pattern = compile(r"\d+", None).unwrap();
-        assert_eq!(pattern.flags, 0);
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
+        assert_eq!(pattern.flags, RegexFlags::new(None));
         assert_eq!(pattern.regex.as_str(), r"\d+");
     }
 
     #[test]
     fn test_compile_with_flags() {
-        let pattern = compile(r"[a-z]+", Some(1)).unwrap(); // IGNORECASE flag
-        assert_eq!(pattern.flags, 1);
+        let flags = RegexFlags::new(Some(RegexFlags::IGNORECASE));
+        let pattern = compile_with_flags(r"[a-z]+", Some(flags)).unwrap(); // IGNORECASE flag
+        assert_eq!(pattern.flags, flags);
     }
 
     #[test]
     fn test_compile_invalid_pattern() {
-        let result = compile(r"[", None);
+        let result = compile_with_flags(r"[", None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_search_not_found() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abcdef").unwrap();
         assert!(result.is_none());
     }
@@ -807,14 +909,14 @@ mod tests {
 
     #[test]
     fn test_match_not_at_start() {
-        let pattern = PatternOrString::Pattern(compile(r"\d+", None).unwrap());
+        let pattern = PatternOrString::Pattern(compile_with_flags(r"\d+", None).unwrap());
         let result = r#match(pattern, "abc123").unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_fullmatch_partial() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
 
         let result = fullmatch(PatternOrString::Pattern(pattern), "123abc").unwrap();
         assert!(result.is_none());
@@ -822,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_fullmatch_full() {
-        let pattern = compile(r"\d+abc", None).unwrap();
+        let pattern = compile_with_flags(r"\d+abc", None).unwrap();
 
         let result = fullmatch(PatternOrString::Pattern(pattern), "123abc").unwrap();
         assert!(result.is_some());
@@ -830,21 +932,21 @@ mod tests {
 
     #[test]
     fn test_findall_multiple_matches() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = findall(PatternOrString::Pattern(pattern), "abc123def456ghi").unwrap();
         assert_eq!(result, vec!["123", "456"]);
     }
 
     #[test]
     fn test_findall_no_matches() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = findall(PatternOrString::Pattern(pattern), "abcdef").unwrap();
         assert_eq!(result, Vec::<String>::new());
     }
 
     #[test]
     fn test_sub_replacement() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
 
         let result = sub(
             PatternOrString::Pattern(pattern),
@@ -857,7 +959,7 @@ mod tests {
 
     #[test]
     fn test_sub_replacement_single_digit() {
-        let pattern = compile(r"\d", None).unwrap();
+        let pattern = compile_with_flags(r"\d", None).unwrap();
 
         let result = sub(
             PatternOrString::Pattern(pattern),
@@ -870,7 +972,7 @@ mod tests {
 
     #[test]
     fn test_sub_replacement_numbers_groups() {
-        let pattern = compile(r"(\w+) (\w+)", None).unwrap();
+        let pattern = compile_with_flags(r"(\w+) (\w+)", None).unwrap();
 
         let result = sub(
             PatternOrString::Pattern(pattern),
@@ -883,7 +985,7 @@ mod tests {
 
     #[test]
     fn test_sub_replacement_named_groups() {
-        let pattern = compile(r"(?P<first>\w+) (?P<second>\w+)", None).unwrap();
+        let pattern = compile_with_flags(r"(?P<first>\w+) (?P<second>\w+)", None).unwrap();
 
         let result = sub(
             PatternOrString::Pattern(pattern),
@@ -896,7 +998,7 @@ mod tests {
 
     #[test]
     fn test_sub_replacement_named_groups_and_positional() {
-        let pattern = compile(r"(?P<first>\w+) (?P<second>\w+)", None).unwrap();
+        let pattern = compile_with_flags(r"(?P<first>\w+) (?P<second>\w+)", None).unwrap();
 
         let result = sub(
             PatternOrString::Pattern(pattern),
@@ -909,14 +1011,14 @@ mod tests {
 
     #[test]
     fn test_subn_replacement_with_count() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = subn(PatternOrString::Pattern(pattern), "X", "abc123def456", 0).unwrap();
         assert_eq!(result.0, "abcXdefX");
     }
 
     #[test]
     fn test_subn_replacement_no_count_all_matches() {
-        let pattern = compile(r"(\d{2})/(\d{2})/(\d{4})", None).unwrap();
+        let pattern = compile_with_flags(r"(\d{2})/(\d{2})/(\d{4})", None).unwrap();
         let text = "Events: 12/25/2023, 01/15/2024, 07/04/2023, 01/07/2027, 01/07/2027, 01/07/2027";
         let result = subn(PatternOrString::Pattern(pattern), r"\3-\2-\1", text, 0).unwrap();
         assert_eq!(
@@ -928,7 +1030,7 @@ mod tests {
 
     #[test]
     fn test_subn_replacement_no_count_five_matches() {
-        let pattern = compile(r"(\d{2})/(\d{2})/(\d{4})(,)", None).unwrap();
+        let pattern = compile_with_flags(r"(\d{2})/(\d{2})/(\d{4})(,)", None).unwrap();
         let text = "Events: 12/25/2023, 01/15/2024, 07/04/2023, 01/07/2027, 01/07/2027, 01/07/2027";
         let result = subn(PatternOrString::Pattern(pattern), r"\3-\2-\1", text, 0).unwrap();
         assert_eq!(
@@ -940,7 +1042,7 @@ mod tests {
 
     #[test]
     fn test_subn_replacement_count_four() {
-        let pattern = compile(r"(\d{2})/(\d{2})/(\d{4})", None).unwrap();
+        let pattern = compile_with_flags(r"(\d{2})/(\d{2})/(\d{4})", None).unwrap();
         let text = "Events: 12/25/2023, 01/15/2024, 07/04/2023, 01/07/2027, 01/07/2027, 01/07/2027";
         let result = subn(PatternOrString::Pattern(pattern), r"\3-\2-\1", text, 4).unwrap();
         assert_eq!(
@@ -952,14 +1054,14 @@ mod tests {
 
     #[test]
     fn test_split_basic() {
-        let pattern = compile(r"\s+", None).unwrap();
+        let pattern = compile_with_flags(r"\s+", None).unwrap();
         let result = split(PatternOrString::Pattern(pattern), "hello world test").unwrap();
         assert_eq!(result, vec!["hello", "world", "test"]);
     }
 
     #[test]
     fn test_split_no_matches() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = split(PatternOrString::Pattern(pattern), "abcdef").unwrap();
         assert_eq!(result, vec!["abcdef"]);
     }
@@ -972,7 +1074,7 @@ mod tests {
 
     #[test]
     fn test_groups_capture() {
-        let pattern = compile(r"(\d+)-(\d+)", None).unwrap();
+        let pattern = compile_with_flags(r"(\d+)-(\d+)", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc123-456def").unwrap();
         assert!(result.is_some());
 
@@ -995,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_match_span() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
         assert!(result.is_some());
 
@@ -1009,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_search_start() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
         assert!(result.is_some());
 
@@ -1024,7 +1126,7 @@ mod tests {
 
     #[test]
     fn test_search_end() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
         assert!(result.is_some());
 
@@ -1042,7 +1144,7 @@ mod tests {
         pyo3::prepare_freethreaded_python();
 
         Python::with_gil(|py| {
-            let pattern = compile(r"(?P<year>\d{4})-(?P<month>\d{2})", None).unwrap();
+            let pattern = compile_with_flags(r"(?P<year>\d{4})-(?P<month>\d{2})", None).unwrap();
             let result = search(PatternOrString::Pattern(pattern), "Date: 2023-12-25").unwrap();
             assert!(result.is_some());
 
@@ -1077,41 +1179,42 @@ mod tests {
 
     #[test]
     fn test_group_by_name() {
-        let pattern = compile(r"(?P<word>\w+)", None).unwrap();
+        let pattern = compile_with_flags(r"(?P<word>\w+)", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "hello world").unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn test_group_by_index() {
-        let pattern = compile(r"(\w+)", None).unwrap();
+        let pattern = compile_with_flags(r"(\w+)", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "hello world").unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn test_pattern_flags_property() {
-        let pattern = compile(r"test", Some(1)).unwrap();
-        assert_eq!(pattern.flags().unwrap(), 1);
+        let flags = RegexFlags::new(Some(RegexFlags::IGNORECASE));
+        let pattern = compile_with_flags(r"test", Some(flags)).unwrap();
+        assert_eq!(pattern.flags().unwrap(), flags.bits);
     }
 
     #[test]
     fn test_pattern_groups_property() {
-        let pattern = compile(r"(\d+)-(\d+)", None).unwrap();
+        let pattern = compile_with_flags(r"(\d+)-(\d+)", None).unwrap();
         assert_eq!(pattern.groups(), 2);
     }
 
     #[test]
     fn test_pattern_pattern_property() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         assert_eq!(pattern.pattern(), r"\d+");
     }
 
     #[test]
     fn test_cache_functionality() {
         // Test that same pattern is cached
-        let pattern1 = compile(r"\d+", None).unwrap();
-        let pattern2 = compile(r"\d+", None).unwrap();
+        let pattern1 = compile_with_flags(r"\d+", None).unwrap();
+        let pattern2 = compile_with_flags(r"\d+", None).unwrap();
 
         // They should have the same underlying regex (though we can't directly test this)
         assert_eq!(pattern1.pattern(), pattern2.pattern());
@@ -1120,14 +1223,14 @@ mod tests {
 
     #[test]
     fn test_purge_cache() {
-        let _ = compile(r"\d+", None).unwrap();
+        let _ = compile_with_flags(r"\d+", None).unwrap();
         let result = purge();
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_expand_template() {
-        let pattern = compile(r"(\w+)\s+(\w+)", None).unwrap();
+        let pattern = compile_with_flags(r"(\w+)\s+(\w+)", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "hello world").unwrap();
         assert!(result.is_some());
 
@@ -1140,28 +1243,29 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_flag() {
-        let pattern = compile(r"hello", Some(1)).unwrap(); // IGNORECASE
+        let flags = RegexFlags::new(Some(RegexFlags::IGNORECASE));
+        let pattern = compile_with_flags(r"hello", Some(flags)).unwrap(); // IGNORECASE
         let result = search(PatternOrString::Pattern(pattern), "HELLO world").unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn test_unicode_support() {
-        let pattern = compile(r"[\u{1F600}-\u{1F64F}]", None).unwrap();
+        let pattern = compile_with_flags(r"[\u{1F600}-\u{1F64F}]", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "Hello 😀 World").unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn test_empty_pattern() {
-        let pattern = compile(r"", None).unwrap();
+        let pattern = compile_with_flags(r"", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "test").unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn test_complex_pattern() {
-        let pattern = compile(r"(\d{1,3}\.){3}\d{1,3}", None).unwrap();
+        let pattern = compile_with_flags(r"(\d{1,3}\.){3}\d{1,3}", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "IP: 192.168.1.1 Gateway").unwrap();
         assert!(result.is_some());
     }
@@ -1171,7 +1275,7 @@ mod tests {
         pyo3::prepare_freethreaded_python();
 
         Python::with_gil(|py| {
-            let pattern = compile(r"(?P<protocol>https?)://(?P<domain>[\w.-]+)", None).unwrap();
+            let pattern = compile_with_flags(r"(?P<protocol>https?)://(?P<domain>[\w.-]+)", None).unwrap();
             let result = search(
                 PatternOrString::Pattern(pattern),
                 "Visit https://example.com for more",
@@ -1208,7 +1312,7 @@ mod tests {
 
     #[test]
     fn test_no_capture_groups() {
-        let pattern = compile(r"\d+", None).unwrap();
+        let pattern = compile_with_flags(r"\d+", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc123def").unwrap();
         assert!(result.is_some());
 
@@ -1222,7 +1326,7 @@ mod tests {
 
     #[test]
     fn test_optional_capture_groups() {
-        let pattern = compile(r"(\d+)?-(\d+)", None).unwrap();
+        let pattern = compile_with_flags(r"(\d+)?-(\d+)", None).unwrap();
         let result = search(PatternOrString::Pattern(pattern), "abc-456def").unwrap();
         assert!(result.is_some());
 
@@ -1839,4 +1943,28 @@ mod tests {
         let vec = results.unwrap();
         assert_eq!(2, vec.len());
     }
+
+    #[test]
+    fn test_verbose_regex() {
+        let regex_text = r"
+        ^                   # Start of string
+        (\+1\s)?            # Optional country code +1 followed by space
+        \(?                 # Optional opening parenthesis
+        (\d{3})             # Area code (3 digits)
+        \)?                 # Optional closing parenthesis
+        [\s\-]?             # Optional separator (space or dash)
+        (\d{3})             # First 3 digits of the phone number
+        [\s\-]?             # Optional separator (space or dash)
+        (\d{4})             # Last 4 digits of the phone number
+        $                   # End of string
+        ";
+        let flags = RegexFlags::new(Some(RegexFlags::VERBOSE));
+        let reggie = compile_with_flags(regex_text, Some(flags)).unwrap();
+        let m = reggie.r#match("+1 (123) 456-7890");
+        assert!(m.is_ok());
+        println!("{:?}", m);
+        let match_obj = m.unwrap().unwrap();
+        assert_eq!(17, match_obj.endpos())
+    }
+
 }

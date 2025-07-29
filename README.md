@@ -32,6 +32,7 @@ If a fancy feature is used then an alternative approach is employed based on par
 an Abstract Syntax Tree (AST) and then compiling this into a using an implemention of a Virtual
 Machine to execute the progam.
 
+fastregex supports many regex options such as IGNORECASE and VERBOSE.
 
 ## 🚀 Quick Start
 
@@ -93,6 +94,35 @@ import fastregex as re
 
 replacement = re.sub(r"(?P<first_name>\w+) (?P<last_name>\w+)", r"\g<last_name>, \g<first_name> \g<last_name>.", "James Bond")
 print(replacement) # 'Bond, James Bond.'
+```
+
+### Using comments in complex regular expressions
+```
+import fastregex as re
+
+pattern = re.compile(r"""
+    ^                   # Start of string
+    (\+1\s)?            # Optional country code +1 followed by space
+    \(?                 # Optional opening parenthesis
+    (\d{3})             # Area code (3 digits)
+    \)?                 # Optional closing parenthesis
+    [\s\-]?             # Optional separator (space or dash)
+    (\d{3})             # First 3 digits of the phone number
+    [\s\-]?             # Optional separator (space or dash)
+    (\d{4})             # Last 4 digits of the phone number
+    $                   # End of string
+""", re.VERBOSE)
+
+test_numbers = [
+    "+1 (123) 456-7890",
+    "123-456-7890",
+    "1234567890",
+    "(123)4567890",
+]
+
+for number in test_numbers:
+    match = pattern.match(number)
+    print(f"{number} ->", "Matched" if match else "No match")
 ```
 
 ## 📄 License
